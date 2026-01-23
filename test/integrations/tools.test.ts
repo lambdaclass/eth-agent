@@ -389,4 +389,174 @@ describe('Tools', () => {
       expect(result.summary).toContain('not found');
     });
   });
+
+  describe('eth_swap tool', () => {
+    beforeEach(() => {
+      (mockWallet as any).swap = vi.fn();
+      (mockWallet as any).getSwapQuote = vi.fn();
+      (mockWallet as any).getSwapLimits = vi.fn();
+      tools = createTools(mockWallet);
+    });
+
+    it('exists in tools list', () => {
+      const toolNames = tools.map((t) => t.name);
+      expect(toolNames).toContain('eth_swap');
+    });
+
+    it('has correct parameters schema', () => {
+      const tool = getTool(tools, 'eth_swap');
+      expect(tool).toBeDefined();
+      expect(tool!.parameters.properties).toHaveProperty('fromToken');
+      expect(tool!.parameters.properties).toHaveProperty('toToken');
+      expect(tool!.parameters.properties).toHaveProperty('amount');
+      expect(tool!.parameters.properties).toHaveProperty('slippageTolerance');
+      expect(tool!.parameters.required).toContain('fromToken');
+      expect(tool!.parameters.required).toContain('toToken');
+      expect(tool!.parameters.required).toContain('amount');
+    });
+
+    it('executes swap via wallet', async () => {
+      (mockWallet as any).swap.mockResolvedValue({
+        success: true,
+        hash: '0xabc123',
+        summary: 'Swapped 100 USDC for 0.04 ETH',
+        swap: {
+          tokenIn: { symbol: 'USDC', amount: '100' },
+          tokenOut: { symbol: 'ETH', amount: '0.04' },
+        },
+      });
+
+      const tool = getTool(tools, 'eth_swap')!;
+      const result = await tool.handler({
+        fromToken: 'USDC',
+        toToken: 'ETH',
+        amount: '100',
+      });
+
+      expect(result.success).toBe(true);
+      expect((mockWallet as any).swap).toHaveBeenCalledWith({
+        fromToken: 'USDC',
+        toToken: 'ETH',
+        amount: '100',
+        slippageTolerance: undefined,
+      });
+    });
+
+    it('passes slippage tolerance', async () => {
+      (mockWallet as any).swap.mockResolvedValue({
+        success: true,
+        hash: '0xabc123',
+        summary: 'Swapped',
+      });
+
+      const tool = getTool(tools, 'eth_swap')!;
+      await tool.handler({
+        fromToken: 'USDC',
+        toToken: 'ETH',
+        amount: '100',
+        slippageTolerance: 0.5,
+      });
+
+      expect((mockWallet as any).swap).toHaveBeenCalledWith({
+        fromToken: 'USDC',
+        toToken: 'ETH',
+        amount: '100',
+        slippageTolerance: 0.5,
+      });
+    });
+
+    it('handles errors properly', async () => {
+      (mockWallet as any).swap.mockRejectedValue(new Error('Insufficient liquidity'));
+
+      const tool = getTool(tools, 'eth_swap')!;
+      const result = await tool.handler({
+        fromToken: 'USDC',
+        toToken: 'ETH',
+        amount: '100',
+      });
+
+      expect(result.success).toBe(false);
+      expect(result.error).toContain('Insufficient liquidity');
+    });
+
+    it('has correct metadata', () => {
+      const tool = getTool(tools, 'eth_swap')!;
+      expect(tool.metadata.category).toBe('write');
+      expect(tool.metadata.riskLevel).toBe('high');
+    });
+  });
+
+  describe('eth_getSwapQuote tool', () => {
+    beforeEach(() => {
+      (mockWallet as any).getSwapQuote = vi.fn();
+      tools = createTools(mockWallet);
+    });
+
+    it('exists in tools list', () => {
+      const toolNames = tools.map((t) => t.name);
+      expect(toolNames).toContain('eth_getSwapQuote');
+    });
+
+    it('returns quote from wallet', async () => {
+      (mockWallet as any).getSwapQuote.mockResolvedValue({
+        fromToken: { symbol: 'USDC', amount: '100' },
+        toToken: { symbol: 'ETH', amount: '0.04' },
+        amountOutMinimum: '0.0398',
+        priceImpact: 0.05,
+        route: 'USDC -> WETH -> ETH',
+      });
+
+      const tool = getTool(tools, 'eth_getSwapQuote')!;
+      const result = await tool.handler({
+        fromToken: 'USDC',
+        toToken: 'ETH',
+        amount: '100',
+      });
+
+      expect(result.success).toBe(true);
+      expect(result.data.fromToken.symbol).toBe('USDC');
+      expect(result.data.toToken.symbol).toBe('ETH');
+    });
+
+    it('has correct metadata', () => {
+      const tool = getTool(tools, 'eth_getSwapQuote')!;
+      expect(tool.metadata.category).toBe('read');
+      expect(tool.metadata.riskLevel).toBe('none');
+    });
+  });
+
+  describe('eth_getSwapLimits tool', () => {
+    beforeEach(() => {
+      (mockWallet as any).getSwapLimits = vi.fn();
+      tools = createTools(mockWallet);
+    });
+
+    it('exists in tools list', () => {
+      const toolNames = tools.map((t) => t.name);
+      expect(toolNames).toContain('eth_getSwapLimits');
+    });
+
+    it('returns swap limits', async () => {
+      (mockWallet as any).getSwapLimits.mockReturnValue({
+        perTransaction: { limit: '1000', unit: 'USD' },
+        daily: { limit: '10000', used: '500', remaining: '9500', unit: 'USD' },
+        maxSlippagePercent: 1,
+        maxPriceImpactPercent: 5,
+        allowedTokens: ['ETH', 'USDC'],
+      });
+
+      const tool = getTool(tools, 'eth_getSwapLimits')!;
+      const result = await tool.handler({});
+
+      expect(result.success).toBe(true);
+      expect(result.data.perTransaction.limit).toBe('1000');
+      expect(result.data.maxSlippagePercent).toBe(1);
+    });
+
+    it('has correct metadata', () => {
+      const tool = getTool(tools, 'eth_getSwapLimits')!;
+      expect(tool.metadata.category).toBe('info');
+      expect(tool.metadata.riskLevel).toBe('none');
+    });
+  });
 });

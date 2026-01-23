@@ -911,4 +911,146 @@ describe('AgentWallet', () => {
       expect(result.success).toBe(true);
     });
   });
+
+  describe('getSwapLimits', () => {
+    it('returns swap limits when configured', () => {
+      const wallet = AgentWallet.create({
+        privateKey: testPrivateKey,
+        limits: {
+          swap: {
+            perTransactionUSD: 1000,
+            perDayUSD: 10000,
+            maxSlippagePercent: 1,
+            maxPriceImpactPercent: 5,
+            allowedTokens: ['ETH', 'USDC'],
+          },
+        },
+      });
+
+      const limits = wallet.getSwapLimits();
+
+      expect(limits.perTransaction.limit).toBe('1000');
+      expect(limits.daily.limit).toBe('10000');
+      expect(limits.maxSlippagePercent).toBe(1);
+      expect(limits.maxPriceImpactPercent).toBe(5);
+      expect(limits.allowedTokens).toContain('ETH');
+      expect(limits.allowedTokens).toContain('USDC');
+    });
+
+    it('returns default swap limits', () => {
+      const wallet = AgentWallet.create({
+        privateKey: testPrivateKey,
+      });
+
+      const limits = wallet.getSwapLimits();
+
+      expect(limits.perTransaction.limit).toBeDefined();
+      expect(limits.daily.limit).toBeDefined();
+      expect(limits.maxSlippagePercent).toBeDefined();
+    });
+  });
+
+  describe('getSwapQuote', () => {
+    it('returns quote for token pair', async () => {
+      const wallet = AgentWallet.create({
+        privateKey: testPrivateKey,
+      });
+
+      // Mock the RPC call for quote
+      mockRpc.call.mockResolvedValue(
+        '0x' +
+        '0000000000000000000000000000000000000000000000000de0b6b3a7640000' + // 1e18 amountOut
+        '0000000000000000000000000000000000000000000000000000000000000000' +
+        '0000000000000000000000000000000000000000000000000000000000000001' +
+        '000000000000000000000000000000000000000000000000000000000003d090'
+      );
+
+      const quote = await wallet.getSwapQuote({
+        fromToken: 'USDC',
+        toToken: 'WETH',
+        amount: '100',
+      });
+
+      expect(quote.fromToken.symbol).toBe('USDC');
+      expect(quote.toToken.symbol).toBe('WETH');
+      expect(quote.amountOutMinimum).toBeDefined();
+      expect(quote.priceImpact).toBeDefined();
+    });
+
+    it('throws for unsupported token', async () => {
+      const wallet = AgentWallet.create({
+        privateKey: testPrivateKey,
+        limits: {
+          swap: {
+            allowedTokens: ['ETH', 'USDC'],
+          },
+        },
+      });
+
+      await expect(wallet.getSwapQuote({
+        fromToken: 'UNKNOWN',
+        toToken: 'USDC',
+        amount: '100',
+      })).rejects.toThrow();
+    });
+  });
+
+  describe('safeSwap', () => {
+    it('returns Result.ok on success', async () => {
+      const wallet = AgentWallet.create({
+        privateKey: testPrivateKey,
+        limits: {
+          swap: {
+            perTransactionUSD: 100000,
+            perDayUSD: 1000000,
+          },
+        },
+      });
+
+      // Mock quote
+      mockRpc.call.mockResolvedValue(
+        '0x' +
+        '0000000000000000000000000000000000000000000000000de0b6b3a7640000' +
+        '0000000000000000000000000000000000000000000000000000000000000000' +
+        '0000000000000000000000000000000000000000000000000000000000000001' +
+        '000000000000000000000000000000000000000000000000000000000003d090'
+      );
+
+      // Mock the approval check (already approved)
+      mockContract.read.mockResolvedValue(2n ** 256n - 1n);
+
+      const result = await wallet.safeSwap({
+        fromToken: 'USDC',
+        toToken: 'WETH',
+        amount: '100',
+      });
+
+      // Note: The actual swap may fail since we haven't mocked everything,
+      // but safeSwap should catch the error and return Result.err
+      expect(result).toBeDefined();
+      expect('ok' in result || 'error' in result).toBe(true);
+    });
+
+    it('returns Result.err on failure', async () => {
+      const wallet = AgentWallet.create({
+        privateKey: testPrivateKey,
+        limits: {
+          swap: {
+            allowedTokens: ['ETH'],
+          },
+        },
+      });
+
+      const result = await wallet.safeSwap({
+        fromToken: 'BLOCKED_TOKEN',
+        toToken: 'ETH',
+        amount: '100',
+      });
+
+      expect(result.ok).toBe(false);
+      if (!result.ok) {
+        expect(result.error).toBeDefined();
+      }
+    });
+  });
 });

@@ -302,4 +302,212 @@ describe('LimitsEngine', () => {
       expect(status.hourly.remaining).toBe('0'); // Should clamp to 0
     });
   });
+
+  describe('Swap Limits', () => {
+    let swapLimits: LimitsEngine;
+
+    beforeEach(() => {
+      swapLimits = new LimitsEngine({
+        perTransaction: '1 ETH',
+        perDay: '20 ETH',
+        swap: {
+          perTransactionUSD: 1000,
+          perDayUSD: 10000,
+          maxSlippagePercent: 1,
+          maxPriceImpactPercent: 5,
+          allowedTokens: ['ETH', 'USDC', 'USDT', 'WETH'],
+          blockedTokens: ['SCAM'],
+        },
+      });
+    });
+
+    describe('checkSwapTransaction', () => {
+      it('allows swaps within limits', () => {
+        expect(() => swapLimits.checkSwapTransaction(
+          'USDC',
+          'ETH',
+          500000000n // $500 (6 decimals)
+        )).not.toThrow();
+      });
+
+      it('blocks swaps exceeding per-transaction limit', () => {
+        expect(() => swapLimits.checkSwapTransaction(
+          'USDC',
+          'ETH',
+          2000000000n // $2000
+        )).toThrow('per-transaction');
+      });
+
+      it('tracks spending for daily limits', () => {
+        // Spend multiple swaps
+        for (let i = 0; i < 10; i++) {
+          swapLimits.checkSwapTransaction('USDC', 'ETH', 1000000000n); // $1000
+          swapLimits.recordSwapSpend('USDC', 'ETH', 1000000000n);
+        }
+
+        // Next swap should exceed daily limit ($10,000)
+        expect(() => swapLimits.checkSwapTransaction(
+          'USDC',
+          'ETH',
+          1000000000n
+        )).toThrow('daily');
+      });
+
+      it('checks token allowlist', () => {
+        expect(() => swapLimits.checkSwapTransaction(
+          'UNKNOWN',
+          'ETH',
+          500000000n
+        )).toThrow(/not in the allowed/i);
+      });
+
+      it('checks token blocklist', () => {
+        expect(() => swapLimits.checkSwapTransaction(
+          'SCAM',
+          'ETH',
+          500000000n
+        )).toThrow(/blocked for swapping/i);
+      });
+
+      it('checks price impact limits', () => {
+        expect(() => swapLimits.checkSwapTransaction(
+          'USDC',
+          'ETH',
+          500000000n,
+          10 // 10% exceeds max 5%
+        )).toThrow(/price impact/i);
+      });
+
+      it('allows swap when price impact within limit', () => {
+        expect(() => swapLimits.checkSwapTransaction(
+          'USDC',
+          'ETH',
+          500000000n,
+          2 // 2% is within 5% limit
+        )).not.toThrow();
+      });
+    });
+
+    describe('recordSwapSpend', () => {
+      it('records swap spending', () => {
+        swapLimits.recordSwapSpend('USDC', 'ETH', 500000000n); // $500
+        const status = swapLimits.getSwapStatus();
+        expect(status.daily.used).toBe('500');
+      });
+
+      it('accumulates multiple swaps', () => {
+        swapLimits.recordSwapSpend('USDC', 'ETH', 300000000n); // $300
+        swapLimits.recordSwapSpend('ETH', 'USDC', 200000000n); // $200
+        const status = swapLimits.getSwapStatus();
+        expect(status.daily.used).toBe('500');
+      });
+    });
+
+    describe('getSwapStatus', () => {
+      it('returns current swap limit status', () => {
+        const status = swapLimits.getSwapStatus();
+
+        expect(status.perTransaction.limit).toBe('1000');
+        expect(status.daily.limit).toBe('10000');
+        expect(status.daily.used).toBe('0');
+        expect(status.daily.remaining).toBe('10000');
+        expect(status.maxSlippagePercent).toBe(1);
+        expect(status.maxPriceImpactPercent).toBe(5);
+      });
+
+      it('updates after spending', () => {
+        swapLimits.recordSwapSpend('USDC', 'ETH', 1000000000n); // $1000
+
+        const status = swapLimits.getSwapStatus();
+        expect(status.daily.used).toBe('1000');
+        expect(status.daily.remaining).toBe('9000');
+      });
+    });
+
+    describe('getMaxSwapUSD', () => {
+      it('returns per-transaction limit when no spending', () => {
+        const max = swapLimits.getMaxSwapUSD();
+        expect(max).toBe(1000000000n); // $1000 in 6 decimals
+      });
+
+      it('decreases as daily limit is approached', () => {
+        // Spend $9500
+        swapLimits.recordSwapSpend('USDC', 'ETH', 9500000000n);
+
+        const max = swapLimits.getMaxSwapUSD();
+        expect(max).toBe(500000000n); // Only $500 remaining
+      });
+    });
+
+    describe('isTokenAllowedForSwap', () => {
+      it('returns true for allowed tokens', () => {
+        expect(swapLimits.isTokenAllowedForSwap('ETH')).toBe(true);
+        expect(swapLimits.isTokenAllowedForSwap('USDC')).toBe(true);
+        expect(swapLimits.isTokenAllowedForSwap('WETH')).toBe(true);
+      });
+
+      it('returns false for blocked tokens', () => {
+        expect(swapLimits.isTokenAllowedForSwap('SCAM')).toBe(false);
+      });
+
+      it('returns false for tokens not in allowlist', () => {
+        expect(swapLimits.isTokenAllowedForSwap('UNI')).toBe(false);
+      });
+
+      it('is case-insensitive', () => {
+        expect(swapLimits.isTokenAllowedForSwap('eth')).toBe(true);
+        expect(swapLimits.isTokenAllowedForSwap('Usdc')).toBe(true);
+      });
+    });
+
+    describe('getMaxSlippagePercent', () => {
+      it('returns configured max slippage', () => {
+        expect(swapLimits.getMaxSlippagePercent()).toBe(1);
+      });
+
+      it('returns default when not configured', () => {
+        const defaultLimits = new LimitsEngine({});
+        expect(defaultLimits.getMaxSlippagePercent()).toBe(1); // Default 1%
+      });
+    });
+
+    describe('getMaxPriceImpactPercent', () => {
+      it('returns configured max price impact', () => {
+        expect(swapLimits.getMaxPriceImpactPercent()).toBe(5);
+      });
+
+      it('returns default when not configured', () => {
+        const defaultLimits = new LimitsEngine({});
+        expect(defaultLimits.getMaxPriceImpactPercent()).toBe(5); // Default 5%
+      });
+    });
+
+    describe('swap limits without allowlist', () => {
+      it('allows any token when no allowlist configured', () => {
+        const noAllowlist = new LimitsEngine({
+          swap: {
+            perTransactionUSD: 1000,
+            perDayUSD: 10000,
+            blockedTokens: ['SCAM'],
+          },
+        });
+
+        expect(noAllowlist.isTokenAllowedForSwap('UNI')).toBe(true);
+        expect(noAllowlist.isTokenAllowedForSwap('LINK')).toBe(true);
+        expect(noAllowlist.isTokenAllowedForSwap('SCAM')).toBe(false);
+      });
+    });
+
+    describe('swap limits with emergency stop', () => {
+      it('blocks swaps when stopped', () => {
+        swapLimits.triggerEmergencyStop('Test');
+
+        expect(() => swapLimits.checkSwapTransaction({
+          usdValue: 100000000n,
+          tokenInSymbol: 'USDC',
+          tokenOutSymbol: 'ETH',
+        })).toThrow('stopped');
+      });
+    });
+  });
 });
