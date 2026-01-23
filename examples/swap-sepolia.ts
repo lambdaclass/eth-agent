@@ -150,12 +150,15 @@ async function main() {
   console.log('(This wraps ETH to WETH via the WETH contract)\n');
 
   try {
+    console.log('Starting swap...');
+    const startTime = Date.now();
     const swapResult = await wallet.swap({
       fromToken: 'ETH',
       toToken: 'WETH',
       amount: '0.0001',
       slippageTolerance: 1, // 1% slippage for safety on testnet
     });
+    console.log(`Swap completed in ${Date.now() - startTime}ms`);
 
     console.log('Swap successful!');
     console.log(`  Transaction hash: ${swapResult.hash}`);
@@ -170,7 +173,36 @@ async function main() {
     console.log('\nUpdated Swap Limits:');
     console.log(`  Daily remaining: $${swapResult.limits.remaining.daily.usd} USD`);
   } catch (error) {
-    console.error('Swap failed:', (error as Error).message);
+    console.error('Wrap failed:', (error as Error).message);
+  }
+
+  // Execute a swap via Uniswap: ETH -> USDC
+  console.log('\n--- Execute Uniswap Swap: ETH -> USDC ---\n');
+  console.log('Executing: 0.0001 ETH -> USDC (via Uniswap)');
+  console.log('(This swaps ETH for USDC through a Uniswap V3 pool)\n');
+
+  try {
+    console.log('Starting Uniswap swap...');
+    const startTime = Date.now();
+    const uniswapResult = await wallet.swap({
+      fromToken: 'ETH',
+      toToken: SEPOLIA_TOKENS.USDC,
+      amount: '0.0001',
+      slippageTolerance: 5, // 5% slippage for testnet (low liquidity)
+    });
+    console.log(`Swap completed in ${Date.now() - startTime}ms`);
+
+    console.log('Uniswap swap successful!');
+    console.log(`  Transaction hash: ${uniswapResult.hash}`);
+    console.log(`  Summary: ${uniswapResult.summary}`);
+    console.log(`  Token In: ${uniswapResult.swap.tokenIn.amount} ${uniswapResult.swap.tokenIn.symbol}`);
+    console.log(`  Token Out: ${uniswapResult.swap.tokenOut.amount} ${uniswapResult.swap.tokenOut.symbol}`);
+    console.log(`  Effective price: ${uniswapResult.swap.effectivePrice}`);
+    console.log(`  Price impact: ${uniswapResult.swap.priceImpact}%`);
+    console.log(`  Gas used: ${uniswapResult.transaction.gasUsed}`);
+    console.log(`\n  View on Etherscan: https://sepolia.etherscan.io/tx/${uniswapResult.hash}`);
+  } catch (error) {
+    console.error('Uniswap swap failed:', (error as Error).message);
 
     // Provide helpful error context
     if ((error as Error).message.includes('liquidity')) {
