@@ -63,7 +63,9 @@
     "lint:fix": "eslint src test --ext .ts --fix",
     "typecheck": "tsc --noEmit",
     "clean": "rm -rf dist coverage",
-    "prepublishOnly": "npm run build"
+    "prepublishOnly": "npm run build",
+    "frontend": "npm run dev --prefix frontend",
+    "frontend:build": "npm run build --prefix frontend"
   },
   "keywords": [
     "ethereum",
