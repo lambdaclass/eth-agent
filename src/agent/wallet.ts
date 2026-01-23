@@ -40,6 +40,12 @@ import {
   type PaymentHandler,
   type WaitForPaymentOptions,
 } from './watcher.js';
+import {
+  CCTPBridge,
+  type BridgeInitResult,
+  type BridgeStatusResult,
+  type BridgePreviewResult,
+} from '../bridge/index.js';
 
 export interface AgentWalletConfig {
   // Account (private key or Account object)
@@ -147,6 +153,24 @@ export interface SendStablecoinResult {
   };
 }
 
+export interface BridgeUSDCOptions {
+  /** Amount in human-readable format (e.g., "100" means 100 USDC) */
+  amount: string | number;
+  /** Destination chain ID */
+  destinationChainId: number;
+  /** Recipient address or ENS on destination chain (defaults to sender) */
+  recipient?: string;
+}
+
+export interface BridgeUSDCResult extends BridgeInitResult {
+  summary: string;
+  limits: {
+    remaining: {
+      daily: string;
+    };
+  };
+}
+
 /**
  * AgentWallet - Safe Ethereum operations for AI agents
  */
@@ -163,6 +187,8 @@ export class AgentWallet {
   private readonly trustedAddresses: Map<string, string>;
   private readonly blockedAddresses: Map<string, string>;
   private readonly agentId: string;
+  private cachedBridge?: CCTPBridge;
+  private cachedChainId?: number;
 
   private constructor(config: Required<{
     account: Account;
@@ -780,6 +806,178 @@ export class AgentWallet {
       tokens: options?.token ? [options.token] : undefined,
     });
     return watcher.waitForPayment(options);
+  }
+
+  // ============ Bridge Methods ============
+
+  /**
+   * Get or create a cached CCTPBridge instance
+   */
+  private async getBridge(): Promise<CCTPBridge> {
+    if (!this.cachedBridge) {
+      this.cachedChainId = await this.rpc.getChainId();
+      this.cachedBridge = new CCTPBridge({
+        sourceRpc: this.rpc,
+        account: this.account,
+        // Let it auto-detect testnet from chain ID
+      });
+    }
+    return this.cachedBridge;
+  }
+
+  /**
+   * Get cached chain ID
+   */
+  private async getChainId(): Promise<number> {
+    if (!this.cachedChainId) {
+      this.cachedChainId = await this.rpc.getChainId();
+    }
+    return this.cachedChainId;
+  }
+
+  /**
+   * Preview a USDC bridge without executing
+   * Useful for checking feasibility and showing info to users
+   *
+   * @example
+   * const preview = await wallet.previewBridgeUSDC({
+   *   amount: '100',
+   *   destinationChainId: 42161,
+   * });
+   * if (preview.canBridge) {
+   *   console.log(`Ready to bridge ${preview.amount.formatted} USDC`);
+   * }
+   */
+  async previewBridgeUSDC(options: BridgeUSDCOptions): Promise<BridgePreviewResult> {
+    const bridge = await this.getBridge();
+
+    // Resolve recipient if provided
+    let recipient: Address | undefined;
+    if (options.recipient) {
+      recipient = await this.resolveAddress(options.recipient);
+    }
+
+    return bridge.previewBridge({
+      token: USDC,
+      amount: options.amount,
+      destinationChainId: options.destinationChainId,
+      recipient,
+    });
+  }
+
+  /**
+   * Bridge USDC to another chain via CCTP
+   * Amount is in human units - "100" means 100 USDC
+   *
+   * @example
+   * const result = await wallet.bridgeUSDC({
+   *   amount: '100',
+   *   destinationChainId: 42161, // Arbitrum
+   * });
+   * console.log(result.messageHash); // Use this to track status
+   */
+  async bridgeUSDC(options: BridgeUSDCOptions): Promise<BridgeUSDCResult> {
+    const chainId = await this.getChainId();
+
+    // Resolve recipient address if provided
+    let recipient: Address | undefined;
+    if (options.recipient) {
+      recipient = await this.resolveAddress(options.recipient);
+
+      // Check if blocked
+      const blocked = this.blockedAddresses.get(recipient.toLowerCase());
+      if (blocked) {
+        throw new BlockedAddressError(recipient, blocked);
+      }
+    }
+
+    // Parse amount for limit checking
+    const rawAmount = parseStablecoinAmount(options.amount, USDC);
+    const formattedAmount = formatStablecoinAmount(rawAmount, USDC);
+
+    // Check bridge spending limits
+    this.limits.checkBridgeTransaction(USDC, rawAmount, options.destinationChainId);
+
+    // Get cached bridge
+    const bridge = await this.getBridge();
+
+    // Initiate bridge
+    const result = await bridge.initiateBridge({
+      token: USDC,
+      amount: options.amount,
+      destinationChainId: options.destinationChainId,
+      recipient,
+    });
+
+    // Record bridge spend in limits
+    this.limits.recordBridgeSpend(USDC, rawAmount, options.destinationChainId);
+
+    // Get updated limit status
+    const bridgeStatus = this.limits.getBridgeStatus();
+
+    return {
+      ...result,
+      summary: `Bridging ${formattedAmount} USDC from chain ${String(chainId)} to chain ${String(options.destinationChainId)}. Message hash: ${result.messageHash}`,
+      limits: {
+        remaining: {
+          daily: bridgeStatus.daily.remaining,
+        },
+      },
+    };
+  }
+
+  /**
+   * Get the status of a bridge transaction
+   */
+  async getBridgeStatus(messageHash: Hex): Promise<BridgeStatusResult> {
+    const bridge = await this.getBridge();
+    return bridge.getStatus(messageHash);
+  }
+
+  /**
+   * Wait for bridge attestation to be ready
+   * This can take 15-30 minutes on mainnet
+   *
+   * @returns The attestation signature needed to complete the bridge
+   */
+  async waitForBridgeAttestation(messageHash: Hex): Promise<Hex> {
+    const bridge = await this.getBridge();
+    return bridge.waitForAttestation(messageHash);
+  }
+
+  /**
+   * Safe version of bridgeUSDC that returns a Result
+   */
+  async safeBridgeUSDC(
+    options: BridgeUSDCOptions
+  ): Promise<Result<BridgeUSDCResult, EthAgentError>> {
+    try {
+      const result = await this.bridgeUSDC(options);
+      return ok(result);
+    } catch (error) {
+      if (error instanceof EthAgentError) {
+        return err(error);
+      }
+      return err(new EthAgentError({
+        code: 'UNKNOWN_ERROR',
+        message: (error as Error).message,
+        suggestion: 'Failed to bridge USDC',
+      }));
+    }
+  }
+
+  /**
+   * Get current bridge spending limit status
+   */
+  getBridgeLimits(): ReturnType<LimitsEngine['getBridgeStatus']> {
+    return this.limits.getBridgeStatus();
+  }
+
+  /**
+   * Get recent bridge history
+   */
+  getBridgeHistory(options?: { hours?: number; limit?: number }): ReturnType<LimitsEngine['getBridgeHistory']> {
+    return this.limits.getBridgeHistory(options);
   }
 
   /**
