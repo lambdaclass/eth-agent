@@ -5,34 +5,10 @@
 
 import type { AgentWallet } from '../agent/index.js';
 import type { Address } from '../core/types.js';
-import { STABLECOINS, type StablecoinInfo } from '../stablecoins/tokens.js';
-
-/**
- * Resolve stablecoin by symbol
- */
-function resolveStablecoin(symbol: string): StablecoinInfo | undefined {
-  const upper = symbol.toUpperCase();
-  return STABLECOINS[upper as keyof typeof STABLECOINS];
-}
-
-/**
- * Supported chain IDs for bridging with human-readable names
- */
-const SUPPORTED_CHAINS: Record<number, string> = {
-  1: 'Ethereum',
-  10: 'Optimism',
-  137: 'Polygon',
-  8453: 'Base',
-  42161: 'Arbitrum',
-  43114: 'Avalanche',
-  // Testnets
-  11155111: 'Sepolia',
-  11155420: 'OP Sepolia',
-  84532: 'Base Sepolia',
-  421614: 'Arbitrum Sepolia',
-  80002: 'Polygon Amoy',
-  43113: 'Avalanche Fuji',
-};
+import {
+  STABLECOINS,
+  getStablecoinsForChain,
+} from '../stablecoins/index.js';
 
 export interface ToolDefinition {
   name: string;
@@ -338,7 +314,7 @@ The transaction will be simulated before sending. Spending limits apply.`,
       },
     },
 
-    // === Swap Operations ===
+// === Swap Operations ===
     {
       name: 'eth_swap',
       description: `Swap tokens using Uniswap V3. Supports ETH, WETH, and any ERC20 token by symbol or address.
@@ -480,22 +456,22 @@ The swap will be quoted before execution to show expected output. Slippage prote
 
     // === Stablecoin Operations ===
     {
-      name: 'eth_sendStablecoin',
-      description: `Send stablecoins (USDC, USDT, DAI, etc.) to an address. Human-readable amounts - no decimals needed.
+      name: 'stablecoin_send',
+      description: `Send stablecoins (USDC, USDT) to an address. No need to know contract addresses - just specify the token symbol and amount.
 
 Example usage:
 - Send 100 USDC to alice.eth
-- Send 50.25 USDT to 0x1234...
+- Send 50.50 USDT to 0x1234...
 
-Supported tokens: USDC, USDT, USDS, DAI, PYUSD, FRAX
-Spending limits apply.`,
+Amount is in human-readable units (100 means 100 USDC, not 100000000).
+Spending limits apply. Transaction will be simulated before sending.`,
       parameters: {
         type: 'object',
         properties: {
           token: {
             type: 'string',
-            description: 'Stablecoin symbol: USDC, USDT, USDS, DAI, PYUSD, or FRAX',
-            enum: ['USDC', 'USDT', 'USDS', 'DAI', 'PYUSD', 'FRAX'],
+            description: 'Stablecoin symbol: USDC or USDT',
+            enum: ['USDC', 'USDT'],
           },
           to: {
             type: 'string',
@@ -503,20 +479,20 @@ Spending limits apply.`,
           },
           amount: {
             type: 'string',
-            description: 'Amount to send in human-readable format (e.g., "100" for 100 USDC)',
+            description: 'Amount to send in human units (e.g., "100" for 100 USDC)',
           },
         },
         required: ['token', 'to', 'amount'],
       },
       handler: async (params) => {
         try {
-          const stablecoin = resolveStablecoin(params['token'] as string);
+          const symbol = params['token'] as string;
+          const stablecoin = STABLECOINS[symbol as keyof typeof STABLECOINS];
           if (!stablecoin) {
-            const tokenName = String(params['token']);
             return {
               success: false,
-              error: `Unknown stablecoin: ${tokenName}. Supported: USDC, USDT, USDS, DAI, PYUSD, FRAX`,
-              summary: `Unknown stablecoin: ${tokenName}`,
+              error: `Unknown stablecoin: ${symbol}. Supported: USDC, USDT`,
+              summary: `Unknown stablecoin: ${symbol}`,
             };
           }
 
@@ -525,6 +501,7 @@ Spending limits apply.`,
             to: params['to'] as string,
             amount: params['amount'] as string,
           });
+
           return {
             success: result.success,
             data: result,
@@ -546,8 +523,8 @@ Spending limits apply.`,
     },
 
     {
-      name: 'eth_getStablecoinBalance',
-      description: 'Get the balance of a specific stablecoin.',
+      name: 'stablecoin_balance',
+      description: 'Get the balance of a specific stablecoin (USDC, USDT, etc.) for the wallet or any address.',
       parameters: {
         type: 'object',
         properties: {
@@ -565,13 +542,13 @@ Spending limits apply.`,
       },
       handler: async (params) => {
         try {
-          const stablecoin = resolveStablecoin(params['token'] as string);
+          const symbol = params['token'] as string;
+          const stablecoin = STABLECOINS[symbol as keyof typeof STABLECOINS];
           if (!stablecoin) {
-            const tokenName = String(params['token']);
             return {
               success: false,
-              error: `Unknown stablecoin: ${tokenName}`,
-              summary: `Unknown stablecoin: ${tokenName}`,
+              error: `Unknown stablecoin: ${symbol}`,
+              summary: `Unknown stablecoin: ${symbol}`,
             };
           }
 
@@ -579,16 +556,17 @@ Spending limits apply.`,
             stablecoin,
             params['address'] as string | undefined
           );
+
           return {
             success: true,
             data: result,
-            summary: `Balance: ${result.formatted} ${result.symbol}`,
+            summary: `${symbol} Balance: ${result.formatted} ${result.symbol}`,
           };
         } catch (err) {
           return {
             success: false,
             error: (err as Error).message,
-            summary: `Failed to get balance: ${(err as Error).message}`,
+            summary: `Failed to get stablecoin balance: ${(err as Error).message}`,
           };
         }
       },
@@ -600,8 +578,8 @@ Spending limits apply.`,
     },
 
     {
-      name: 'eth_getStablecoinBalances',
-      description: 'Get balances of all supported stablecoins on the current chain.',
+      name: 'stablecoin_balances',
+      description: 'Get all stablecoin balances for the wallet. Returns balances for all supported stablecoins on the current network.',
       parameters: {
         type: 'object',
         properties: {
@@ -614,203 +592,24 @@ Spending limits apply.`,
       },
       handler: async (params) => {
         try {
-          const balances = await wallet.getStablecoinBalances(
+          const result = await wallet.getStablecoinBalances(
             params['address'] as string | undefined
           );
 
-          const nonZero = Object.entries(balances)
-            .filter(([, b]) => b.raw > 0n)
-            .map(([symbol, b]) => `${b.formatted} ${symbol}`)
+          const balancesSummary = Object.entries(result)
+            .map(([symbol, bal]) => `${symbol}: ${bal.formatted}`)
             .join(', ');
 
           return {
             success: true,
-            data: balances,
-            summary: nonZero || 'No stablecoin balances',
+            data: result,
+            summary: balancesSummary || 'No stablecoins available on this network',
           };
         } catch (err) {
           return {
             success: false,
             error: (err as Error).message,
-            summary: `Failed to get balances: ${(err as Error).message}`,
-          };
-        }
-      },
-      metadata: {
-        category: 'read',
-        requiresApproval: false,
-        riskLevel: 'none',
-      },
-    },
-
-    // === Bridge Operations ===
-    {
-      name: 'eth_bridge',
-      description: `Bridge stablecoins to another chain. Auto-selects the best route based on cost or speed.
-
-Example usage:
-- Bridge 100 USDC to Arbitrum (chain 42161)
-- Bridge 500 USDC to Base (chain 8453) prioritizing speed
-
-Supported chains: Ethereum (1), Arbitrum (42161), Optimism (10), Base (8453), Polygon (137), Avalanche (43114)
-Testnets: Sepolia (11155111), Base Sepolia (84532), OP Sepolia (11155420), Arb Sepolia (421614)
-
-Returns a tracking ID to monitor bridge progress.`,
-      parameters: {
-        type: 'object',
-        properties: {
-          token: {
-            type: 'string',
-            description: 'Stablecoin to bridge: USDC (most supported), USDT, or DAI',
-            enum: ['USDC', 'USDT', 'DAI'],
-          },
-          amount: {
-            type: 'string',
-            description: 'Amount to bridge in human-readable format (e.g., "100" for 100 USDC)',
-          },
-          destinationChainId: {
-            type: 'number',
-            description: 'Destination chain ID (e.g., 42161 for Arbitrum, 8453 for Base)',
-          },
-          recipient: {
-            type: 'string',
-            description: 'Recipient address on destination chain. Defaults to sender address.',
-          },
-          priority: {
-            type: 'string',
-            description: 'Route selection priority: "cost" (lowest fees) or "speed" (fastest)',
-            enum: ['cost', 'speed'],
-          },
-        },
-        required: ['token', 'amount', 'destinationChainId'],
-      },
-      handler: async (params) => {
-        try {
-          const stablecoin = resolveStablecoin(params['token'] as string);
-          if (!stablecoin) {
-            const tokenName = String(params['token']);
-            return {
-              success: false,
-              error: `Unknown stablecoin: ${tokenName}. Supported for bridging: USDC, USDT, DAI`,
-              summary: `Unknown stablecoin: ${tokenName}`,
-            };
-          }
-
-          const destChainId = params['destinationChainId'] as number;
-          const destChainName = SUPPORTED_CHAINS[destChainId] || `Chain ${destChainId}`;
-
-          const result = await wallet.bridge({
-            token: stablecoin,
-            amount: params['amount'] as string,
-            destinationChainId: destChainId,
-            recipient: params['recipient'] as string | undefined,
-            preference: {
-              priority: (params['priority'] as 'cost' | 'speed') || 'cost',
-            },
-          });
-
-          return {
-            success: true,
-            data: {
-              trackingId: result.trackingId,
-              protocol: result.protocol,
-              sourceTxHash: result.sourceTxHash,
-              amount: result.amount,
-              fee: result.fee,
-              estimatedTime: result.estimatedTime,
-              destinationChain: destChainName,
-            },
-            summary: `Bridging ${result.amount.formatted} ${stablecoin.symbol} to ${destChainName} via ${result.protocol}. Tracking ID: ${result.trackingId}`,
-          };
-        } catch (err) {
-          return {
-            success: false,
-            error: (err as Error).message,
-            summary: `Failed to bridge: ${(err as Error).message}`,
-          };
-        }
-      },
-      metadata: {
-        category: 'write',
-        requiresApproval: true,
-        riskLevel: 'high',
-      },
-    },
-
-    {
-      name: 'eth_previewBridge',
-      description: 'Preview a bridge operation without executing. Shows fees, estimated time, and validates the operation.',
-      parameters: {
-        type: 'object',
-        properties: {
-          token: {
-            type: 'string',
-            description: 'Stablecoin to bridge: USDC, USDT, or DAI',
-            enum: ['USDC', 'USDT', 'DAI'],
-          },
-          amount: {
-            type: 'string',
-            description: 'Amount to bridge in human-readable format',
-          },
-          destinationChainId: {
-            type: 'number',
-            description: 'Destination chain ID',
-          },
-          priority: {
-            type: 'string',
-            description: 'Route selection priority: "cost" or "speed"',
-            enum: ['cost', 'speed'],
-          },
-        },
-        required: ['token', 'amount', 'destinationChainId'],
-      },
-      handler: async (params) => {
-        try {
-          const stablecoin = resolveStablecoin(params['token'] as string);
-          if (!stablecoin) {
-            const tokenName = String(params['token']);
-            return {
-              success: false,
-              error: `Unknown stablecoin: ${tokenName}`,
-              summary: `Unknown stablecoin: ${tokenName}`,
-            };
-          }
-
-          const destChainId = params['destinationChainId'] as number;
-          const preview = await wallet.previewBridgeWithRouter({
-            token: stablecoin,
-            amount: params['amount'] as string,
-            destinationChainId: destChainId,
-            preference: {
-              priority: (params['priority'] as 'cost' | 'speed') || 'cost',
-            },
-          });
-
-          const destChainName = SUPPORTED_CHAINS[destChainId] ||
-            `Chain ${String(destChainId)}`;
-
-          if (preview.canBridge) {
-            const summary = `Can bridge ${preview.amount.formatted} ${stablecoin.symbol} to ${destChainName}. ` +
-              `Protocol: ${preview.quote?.protocol || 'auto'}, ` +
-              `Fee: $${preview.quote?.fee.totalUSD.toFixed(2) || '0'}, ` +
-              `Time: ${preview.quote?.estimatedTime.display || 'unknown'}`;
-            return {
-              success: true,
-              data: preview,
-              summary,
-            };
-          } else {
-            return {
-              success: true,
-              data: preview,
-              summary: `Cannot bridge: ${preview.blockers.join(', ')}`,
-            };
-          }
-        } catch (err) {
-          return {
-            success: false,
-            error: (err as Error).message,
-            summary: `Failed to preview bridge: ${(err as Error).message}`,
+            summary: `Failed to get stablecoin balances: ${(err as Error).message}`,
           };
         }
       },
@@ -822,115 +621,8 @@ Returns a tracking ID to monitor bridge progress.`,
     },
 
     {
-      name: 'eth_compareBridgeRoutes',
-      description: 'Compare available bridge routes to find the best option for your transfer.',
-      parameters: {
-        type: 'object',
-        properties: {
-          token: {
-            type: 'string',
-            description: 'Stablecoin to bridge: USDC, USDT, or DAI',
-            enum: ['USDC', 'USDT', 'DAI'],
-          },
-          amount: {
-            type: 'string',
-            description: 'Amount to bridge in human-readable format',
-          },
-          destinationChainId: {
-            type: 'number',
-            description: 'Destination chain ID',
-          },
-        },
-        required: ['token', 'amount', 'destinationChainId'],
-      },
-      handler: async (params) => {
-        try {
-          const stablecoin = resolveStablecoin(params['token'] as string);
-          if (!stablecoin) {
-            const tokenName = String(params['token']);
-            return {
-              success: false,
-              error: `Unknown stablecoin: ${tokenName}`,
-              summary: `Unknown stablecoin: ${tokenName}`,
-            };
-          }
-
-          const routes = await wallet.compareBridgeRoutes({
-            token: stablecoin,
-            amount: params['amount'] as string,
-            destinationChainId: params['destinationChainId'] as number,
-          });
-
-          const routeSummaries = routes.quotes.map(
-            (q) => `${q.protocol}: $${q.fee.totalUSD.toFixed(2)} fee, ${q.estimatedTime.display}`
-          );
-
-          const summary = routes.recommended
-            ? `Recommended: ${routes.recommended.protocol}. Options: ${routeSummaries.join('; ')}`
-            : `No routes available for this bridge`;
-
-          return {
-            success: true,
-            data: routes,
-            summary,
-          };
-        } catch (err) {
-          return {
-            success: false,
-            error: (err as Error).message,
-            summary: `Failed to compare routes: ${(err as Error).message}`,
-          };
-        }
-      },
-      metadata: {
-        category: 'read',
-        requiresApproval: false,
-        riskLevel: 'none',
-      },
-    },
-
-    {
-      name: 'eth_getBridgeStatus',
-      description: 'Get the status of a bridge operation using its tracking ID.',
-      parameters: {
-        type: 'object',
-        properties: {
-          trackingId: {
-            type: 'string',
-            description: 'The tracking ID returned from eth_bridge',
-          },
-        },
-        required: ['trackingId'],
-      },
-      handler: async (params) => {
-        try {
-          const status = await wallet.getBridgeStatusByTrackingId(
-            params['trackingId'] as string
-          );
-
-          return {
-            success: true,
-            data: status,
-            summary: `Bridge ${status.status}: ${status.message} (${status.progress}% complete)`,
-          };
-        } catch (err) {
-          return {
-            success: false,
-            error: (err as Error).message,
-            summary: `Failed to get bridge status: ${(err as Error).message}`,
-          };
-        }
-      },
-      metadata: {
-        category: 'read',
-        requiresApproval: false,
-        riskLevel: 'none',
-      },
-    },
-
-    {
-      name: 'eth_getBridgeLimits',
-      description: 'Get current bridge spending limits and allowed destination chains.',
+      name: 'stablecoin_list',
+      description: 'List all stablecoins available on the current network with their contract addresses.',
       parameters: {
         type: 'object',
         properties: {},
@@ -938,22 +630,134 @@ Returns a tracking ID to monitor bridge progress.`,
       },
       handler: async () => {
         try {
-          const limits = wallet.getBridgeLimits();
+          const caps = wallet.getCapabilities();
+          const chainId = caps.network.chainId;
+          const available = getStablecoinsForChain(chainId);
 
-          const allowedChains = limits.allowedDestinations
-            ?.map((id) => SUPPORTED_CHAINS[id] || `Chain ${id}`)
-            .join(', ') || 'all chains';
+          const stablecoins = Array.from(available.entries()).map(([symbol, address]) => ({
+            symbol,
+            address,
+            decimals: STABLECOINS[symbol as keyof typeof STABLECOINS]?.decimals,
+          }));
 
           return {
             success: true,
-            data: limits,
-            summary: `Bridge limits - Per tx: $${limits.perTransaction.limit}, Daily remaining: $${limits.daily.remaining}, Allowed: ${allowedChains}`,
+            data: {
+              chainId,
+              stablecoins,
+            },
+            summary: stablecoins.length > 0
+              ? `Available on chain ${chainId}: ${stablecoins.map(s => s.symbol).join(', ')}`
+              : `No stablecoins available on chain ${chainId}`,
           };
         } catch (err) {
           return {
             success: false,
             error: (err as Error).message,
-            summary: `Failed to get bridge limits: ${(err as Error).message}`,
+            summary: `Failed to list stablecoins: ${(err as Error).message}`,
+          };
+        }
+      },
+      metadata: {
+        category: 'info',
+        requiresApproval: false,
+        riskLevel: 'none',
+      },
+    },
+
+    // === Network Information ===
+    {
+      name: 'network_list',
+      description: `List all supported networks with their details. Use this to find available L2 networks for lower fees.
+
+Supported networks include:
+- Ethereum Mainnet (mainnet)
+- L2s: Arbitrum, Optimism, Base, Polygon, Taiko, Scroll, Linea, zkSync Era
+- Testnets: Sepolia, and L2 testnets`,
+      parameters: {
+        type: 'object',
+        properties: {},
+        required: [],
+      },
+      handler: async () => {
+        const networks = [
+          { name: 'mainnet', chainId: 1, type: 'L1', description: 'Ethereum Mainnet' },
+          { name: 'arbitrum', chainId: 42161, type: 'L2', description: 'Arbitrum One - Optimistic rollup, low fees' },
+          { name: 'optimism', chainId: 10, type: 'L2', description: 'OP Mainnet - Optimistic rollup, OP Stack' },
+          { name: 'base', chainId: 8453, type: 'L2', description: 'Base - Coinbase L2, OP Stack' },
+          { name: 'polygon', chainId: 137, type: 'L2', description: 'Polygon PoS - Sidechain, very low fees' },
+          { name: 'taiko', chainId: 167000, type: 'L2', description: 'Taiko - Type 1 zkEVM, Ethereum equivalent' },
+          { name: 'scroll', chainId: 534352, type: 'L2', description: 'Scroll - zkEVM, EVM equivalent' },
+          { name: 'linea', chainId: 59144, type: 'L2', description: 'Linea - zkEVM by Consensys' },
+          { name: 'zksync', chainId: 324, type: 'L2', description: 'zkSync Era - zkEVM with native account abstraction' },
+          { name: 'sepolia', chainId: 11155111, type: 'testnet', description: 'Ethereum Sepolia Testnet' },
+          { name: 'taiko-hekla', chainId: 167009, type: 'testnet', description: 'Taiko Hekla Testnet' },
+          { name: 'scroll-sepolia', chainId: 534351, type: 'testnet', description: 'Scroll Sepolia Testnet' },
+          { name: 'linea-sepolia', chainId: 59141, type: 'testnet', description: 'Linea Sepolia Testnet' },
+          { name: 'zksync-sepolia', chainId: 300, type: 'testnet', description: 'zkSync Sepolia Testnet' },
+        ];
+
+        return {
+          success: true,
+          data: { networks },
+          summary: `${networks.filter(n => n.type === 'L2').length} L2 networks available for lower fees: ${networks.filter(n => n.type === 'L2').map(n => n.name).join(', ')}`,
+        };
+      },
+      metadata: {
+        category: 'info',
+        requiresApproval: false,
+        riskLevel: 'none',
+      },
+    },
+
+    {
+      name: 'network_info',
+      description: 'Get information about the current network including chain ID and available stablecoins.',
+      parameters: {
+        type: 'object',
+        properties: {},
+        required: [],
+      },
+      handler: async () => {
+        try {
+          const caps = wallet.getCapabilities();
+          const chainId = caps.network.chainId;
+          const available = getStablecoinsForChain(chainId);
+
+          const networkNames: Record<number, string> = {
+            1: 'Ethereum Mainnet',
+            10: 'Optimism',
+            137: 'Polygon',
+            42161: 'Arbitrum One',
+            8453: 'Base',
+            43114: 'Avalanche',
+            56: 'BNB Chain',
+            167000: 'Taiko',
+            534352: 'Scroll',
+            59144: 'Linea',
+            324: 'zkSync Era',
+            11155111: 'Sepolia',
+            167009: 'Taiko Hekla',
+            534351: 'Scroll Sepolia',
+            59141: 'Linea Sepolia',
+            300: 'zkSync Sepolia',
+          };
+
+          return {
+            success: true,
+            data: {
+              chainId,
+              name: networkNames[chainId] || `Chain ${chainId}`,
+              walletAddress: caps.address,
+              availableStablecoins: Array.from(available.keys()),
+            },
+            summary: `Connected to ${networkNames[chainId] || `Chain ${chainId}`} (${chainId}). Stablecoins: ${Array.from(available.keys()).join(', ') || 'none'}`,
+          };
+        } catch (err) {
+          return {
+            success: false,
+            error: (err as Error).message,
+            summary: `Failed to get network info: ${(err as Error).message}`,
           };
         }
       },

@@ -245,7 +245,7 @@ const fast = await wallet.bridge({
 | Stargate | USDC, USDT | 5-15 min | ~0.06% | Liquidity pools |
 | Across | USDC, USDT | 2-5 min | Variable | Optimistic bridging |
 
-### Supported Chains
+### Supported Chains for Bridging
 
 | Chain | Chain ID | Testnet |
 |-------|----------|---------|
@@ -270,6 +270,47 @@ const wallet = AgentWallet.create({
   },
 });
 ```
+
+## Networks
+
+Send stablecoins on Ethereum mainnet or any supported L2 for lower fees:
+
+```typescript
+// Ethereum Mainnet (default)
+const wallet = AgentWallet.create({ privateKey: KEY });
+
+// L2 networks for lower fees
+const taikoWallet = AgentWallet.create({ privateKey: KEY, network: 'taiko' });
+const scrollWallet = AgentWallet.create({ privateKey: KEY, network: 'scroll' });
+const lineaWallet = AgentWallet.create({ privateKey: KEY, network: 'linea' });
+const zksyncWallet = AgentWallet.create({ privateKey: KEY, network: 'zksync' });
+
+// Other supported networks
+const arbitrumWallet = AgentWallet.create({ privateKey: KEY, network: 'arbitrum' });
+const baseWallet = AgentWallet.create({ privateKey: KEY, network: 'base' });
+const optimismWallet = AgentWallet.create({ privateKey: KEY, network: 'optimism' });
+const polygonWallet = AgentWallet.create({ privateKey: KEY, network: 'polygon' });
+
+// Testnets
+const sepoliaWallet = AgentWallet.create({ privateKey: KEY, network: 'sepolia' });
+const taikoTestnet = AgentWallet.create({ privateKey: KEY, network: 'taiko-hekla' });
+```
+
+### Supported Networks
+
+| Network | Shortcut | Chain ID | Type | Notes |
+|---------|----------|----------|------|-------|
+| Ethereum | `mainnet` | 1 | L1 | Default, ENS support |
+| Arbitrum | `arbitrum` | 42161 | L2 | Optimistic rollup |
+| Optimism | `optimism` | 10 | L2 | OP Stack |
+| Base | `base` | 8453 | L2 | OP Stack, Coinbase |
+| Polygon | `polygon` | 137 | L2 | Sidechain |
+| Taiko | `taiko` | 167000 | L2 | Type 1 zkEVM |
+| Scroll | `scroll` | 534352 | L2 | zkEVM |
+| Linea | `linea` | 59144 | L2 | zkEVM, Consensys |
+| zkSync Era | `zksync` | 324 | L2 | zkEVM, native AA |
+
+All L2s support USDC and USDT with significantly lower fees than mainnet.
 ## Safety
 
 Spending limits prevent your agent from draining a wallet:
