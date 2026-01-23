@@ -21,7 +21,7 @@ await wallet.sendUSDC({ to: 'merchant.eth', amount: '100' });
 
 ## Why eth-agent?
 
-AI agents need to pay for things—API calls, services, subscriptions. Stablecoins are the obvious choice: predictable value, instant settlement, global reach. But sending USDC with existing libraries is surprisingly hard:
+AI agents need to pay for things, API calls, services, subscriptions. Stablecoins are the obvious choice: predictable value, instant settlement, global reach. But sending USDC with existing libraries is surprisingly hard:
 
 **Without eth-agent:**
 ```typescript
