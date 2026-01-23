@@ -102,12 +102,16 @@ export class RPCClient {
       } catch (err) {
         lastError = err as Error;
 
-        // Don't retry on RPC errors (they're deterministic)
+        // Check if this is an RPC error
         if (err instanceof RPCRequestError) {
-          throw err;
+          // Only retry transient RPC errors
+          if (!err.isTransient()) {
+            throw err;
+          }
+          // Fall through to retry logic for transient errors
         }
 
-        // Retry on network errors
+        // Retry on network errors and transient RPC errors
         if (attempt < this.retries) {
           await sleep(this.retryDelay * (attempt + 1));
         }
@@ -439,6 +443,107 @@ export class RPCRequestError extends Error {
     super(message);
     this.name = 'RPCRequestError';
   }
+
+  /**
+   * Check if this error is transient (may succeed on retry)
+   */
+  isTransient(): boolean {
+    return isTransientRPCError(this);
+  }
+}
+
+// ============ Error Classification ============
+
+/**
+ * Standard JSON-RPC error codes that indicate permanent failures
+ * These errors will always fail regardless of retries
+ */
+const PERMANENT_ERROR_CODES = new Set([
+  -32700, // Parse error - invalid JSON
+  -32600, // Invalid request - not a valid request object
+  -32601, // Method not found - method does not exist
+  -32602, // Invalid params - invalid method parameters
+  -32603, // Internal error - internal JSON-RPC error (sometimes transient, but often indicates a bug)
+]);
+
+/**
+ * Patterns in error messages that indicate transient failures
+ * These errors may succeed on retry
+ */
+const TRANSIENT_ERROR_PATTERNS = [
+  'rate limit',
+  'too many requests',
+  'timeout',
+  'timed out',
+  'overloaded',
+  'capacity',
+  'try again',
+  'temporarily unavailable',
+  'service unavailable',
+  'connection reset',
+  'econnreset',
+  'socket hang up',
+  'network error',
+];
+
+/**
+ * Ethereum-specific error codes that are permanent
+ * See: https://eips.ethereum.org/EIPS/eip-1474
+ */
+const PERMANENT_ETH_ERROR_CODES = new Set([
+  -32000, // Generic server error (context-dependent, but often permanent like "nonce too low")
+]);
+
+/**
+ * Patterns that indicate permanent Ethereum errors even with -32000 code
+ */
+const PERMANENT_ETH_ERROR_PATTERNS = [
+  'nonce too low',
+  'nonce too high',
+  'insufficient funds',
+  'gas too low',
+  'intrinsic gas too low',
+  'exceeds block gas limit',
+  'already known',
+  'replacement transaction underpriced',
+  'transaction underpriced',
+  'invalid sender',
+  'invalid signature',
+];
+
+/**
+ * Determine if an RPC error is transient (may succeed on retry)
+ */
+export function isTransientRPCError(error: RPCRequestError): boolean {
+  const code = error.code;
+  const message = error.message.toLowerCase();
+
+  // Standard JSON-RPC permanent errors - never retry
+  if (PERMANENT_ERROR_CODES.has(code)) {
+    return false;
+  }
+
+  // Check for permanent Ethereum-specific errors
+  if (PERMANENT_ETH_ERROR_CODES.has(code)) {
+    // These are usually permanent, but check message to be sure
+    if (PERMANENT_ETH_ERROR_PATTERNS.some(pattern => message.includes(pattern))) {
+      return false;
+    }
+  }
+
+  // Check for transient patterns in message
+  if (TRANSIENT_ERROR_PATTERNS.some(pattern => message.includes(pattern))) {
+    return true;
+  }
+
+  // For -32005 (rate limit) always retry
+  if (code === -32005) {
+    return true;
+  }
+
+  // Default: treat unknown RPC errors as permanent to avoid infinite retries
+  // This is safer than assuming all errors are transient
+  return false;
 }
 
 // ============ Raw Types (from RPC) ============

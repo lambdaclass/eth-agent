@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { RPCClient, RPCRequestError } from '../../src/protocol/rpc.js';
+import { RPCClient, RPCRequestError, isTransientRPCError } from '../../src/protocol/rpc.js';
 import type { Address, Hash, Hex } from '../../src/core/types.js';
 
 describe('RPCClient', () => {
@@ -892,6 +892,240 @@ describe('RPCClient', () => {
       expect(error.code).toBe(-32600);
       expect(error.data).toEqual({ detail: 'test' });
       expect(error.name).toBe('RPCRequestError');
+    });
+
+    it('has isTransient method', () => {
+      const permanentError = new RPCRequestError(-32600, 'Invalid request');
+      const transientError = new RPCRequestError(-32005, 'rate limit exceeded');
+
+      expect(permanentError.isTransient()).toBe(false);
+      expect(transientError.isTransient()).toBe(true);
+    });
+  });
+
+  describe('isTransientRPCError', () => {
+    describe('permanent errors', () => {
+      it('treats -32700 (parse error) as permanent', () => {
+        const error = new RPCRequestError(-32700, 'Parse error');
+        expect(isTransientRPCError(error)).toBe(false);
+      });
+
+      it('treats -32600 (invalid request) as permanent', () => {
+        const error = new RPCRequestError(-32600, 'Invalid request');
+        expect(isTransientRPCError(error)).toBe(false);
+      });
+
+      it('treats -32601 (method not found) as permanent', () => {
+        const error = new RPCRequestError(-32601, 'Method not found');
+        expect(isTransientRPCError(error)).toBe(false);
+      });
+
+      it('treats -32602 (invalid params) as permanent', () => {
+        const error = new RPCRequestError(-32602, 'Invalid params');
+        expect(isTransientRPCError(error)).toBe(false);
+      });
+
+      it('treats -32603 (internal error) as permanent', () => {
+        const error = new RPCRequestError(-32603, 'Internal error');
+        expect(isTransientRPCError(error)).toBe(false);
+      });
+
+      it('treats "nonce too low" as permanent', () => {
+        const error = new RPCRequestError(-32000, 'nonce too low: next nonce 5, tx nonce 4');
+        expect(isTransientRPCError(error)).toBe(false);
+      });
+
+      it('treats "insufficient funds" as permanent', () => {
+        const error = new RPCRequestError(-32000, 'insufficient funds for gas * price + value');
+        expect(isTransientRPCError(error)).toBe(false);
+      });
+
+      it('treats "already known" as permanent', () => {
+        const error = new RPCRequestError(-32000, 'already known');
+        expect(isTransientRPCError(error)).toBe(false);
+      });
+
+      it('treats "replacement transaction underpriced" as permanent', () => {
+        const error = new RPCRequestError(-32000, 'replacement transaction underpriced');
+        expect(isTransientRPCError(error)).toBe(false);
+      });
+
+      it('treats "intrinsic gas too low" as permanent', () => {
+        const error = new RPCRequestError(-32000, 'intrinsic gas too low');
+        expect(isTransientRPCError(error)).toBe(false);
+      });
+    });
+
+    describe('transient errors', () => {
+      it('treats -32005 (rate limit) as transient', () => {
+        const error = new RPCRequestError(-32005, 'rate limit exceeded');
+        expect(isTransientRPCError(error)).toBe(true);
+      });
+
+      it('treats "rate limit" message as transient', () => {
+        const error = new RPCRequestError(-32000, 'rate limit exceeded, please try again');
+        expect(isTransientRPCError(error)).toBe(true);
+      });
+
+      it('treats "too many requests" as transient', () => {
+        const error = new RPCRequestError(-32000, 'too many requests');
+        expect(isTransientRPCError(error)).toBe(true);
+      });
+
+      it('treats "timeout" as transient', () => {
+        const error = new RPCRequestError(-32000, 'request timeout');
+        expect(isTransientRPCError(error)).toBe(true);
+      });
+
+      it('treats "overloaded" as transient', () => {
+        const error = new RPCRequestError(-32000, 'server overloaded');
+        expect(isTransientRPCError(error)).toBe(true);
+      });
+
+      it('treats "try again" as transient', () => {
+        const error = new RPCRequestError(-32000, 'service busy, try again later');
+        expect(isTransientRPCError(error)).toBe(true);
+      });
+
+      it('treats "temporarily unavailable" as transient', () => {
+        const error = new RPCRequestError(-32000, 'service temporarily unavailable');
+        expect(isTransientRPCError(error)).toBe(true);
+      });
+
+      it('is case-insensitive for message patterns', () => {
+        const error = new RPCRequestError(-32000, 'RATE LIMIT EXCEEDED');
+        expect(isTransientRPCError(error)).toBe(true);
+      });
+    });
+
+    describe('unknown errors', () => {
+      it('treats unknown errors as permanent by default', () => {
+        const error = new RPCRequestError(-32099, 'Some unknown error');
+        expect(isTransientRPCError(error)).toBe(false);
+      });
+    });
+  });
+
+  describe('retry behavior with transient RPC errors', () => {
+    it('retries on transient RPC error', async () => {
+      const client = new RPCClient({ url: 'https://rpc.example.com', retries: 2, retryDelay: 10 });
+      let callCount = 0;
+
+      globalThis.fetch = vi.fn().mockImplementation(() => {
+        callCount++;
+        if (callCount < 3) {
+          return Promise.resolve({
+            ok: true,
+            status: 200,
+            json: () => Promise.resolve({
+              jsonrpc: '2.0',
+              id: callCount,
+              error: { code: -32005, message: 'rate limit exceeded' },
+            }),
+          });
+        }
+        return Promise.resolve({
+          ok: true,
+          status: 200,
+          json: () => Promise.resolve({ jsonrpc: '2.0', id: callCount, result: '0x1' }),
+        });
+      });
+
+      const result = await client.request<Hex>('eth_chainId');
+      expect(result).toBe('0x1');
+      expect(callCount).toBe(3);
+    });
+
+    it('retries on "too many requests" message', async () => {
+      const client = new RPCClient({ url: 'https://rpc.example.com', retries: 1, retryDelay: 10 });
+      let callCount = 0;
+
+      globalThis.fetch = vi.fn().mockImplementation(() => {
+        callCount++;
+        if (callCount === 1) {
+          return Promise.resolve({
+            ok: true,
+            status: 200,
+            json: () => Promise.resolve({
+              jsonrpc: '2.0',
+              id: callCount,
+              error: { code: -32000, message: 'too many requests' },
+            }),
+          });
+        }
+        return Promise.resolve({
+          ok: true,
+          status: 200,
+          json: () => Promise.resolve({ jsonrpc: '2.0', id: callCount, result: '0x1' }),
+        });
+      });
+
+      const result = await client.request<Hex>('eth_chainId');
+      expect(result).toBe('0x1');
+      expect(callCount).toBe(2);
+    });
+
+    it('does not retry on permanent RPC error like "nonce too low"', async () => {
+      const client = new RPCClient({ url: 'https://rpc.example.com', retries: 2, retryDelay: 10 });
+      let callCount = 0;
+
+      globalThis.fetch = vi.fn().mockImplementation(() => {
+        callCount++;
+        return Promise.resolve({
+          ok: true,
+          status: 200,
+          json: () => Promise.resolve({
+            jsonrpc: '2.0',
+            id: callCount,
+            error: { code: -32000, message: 'nonce too low' },
+          }),
+        });
+      });
+
+      await expect(client.request('eth_sendRawTransaction', ['0x...'])).rejects.toThrow('nonce too low');
+      expect(callCount).toBe(1);
+    });
+
+    it('does not retry on "insufficient funds"', async () => {
+      const client = new RPCClient({ url: 'https://rpc.example.com', retries: 2, retryDelay: 10 });
+      let callCount = 0;
+
+      globalThis.fetch = vi.fn().mockImplementation(() => {
+        callCount++;
+        return Promise.resolve({
+          ok: true,
+          status: 200,
+          json: () => Promise.resolve({
+            jsonrpc: '2.0',
+            id: callCount,
+            error: { code: -32000, message: 'insufficient funds for gas * price + value' },
+          }),
+        });
+      });
+
+      await expect(client.request('eth_sendRawTransaction', ['0x...'])).rejects.toThrow('insufficient funds');
+      expect(callCount).toBe(1);
+    });
+
+    it('exhausts retries on persistent transient error', async () => {
+      const client = new RPCClient({ url: 'https://rpc.example.com', retries: 2, retryDelay: 10 });
+      let callCount = 0;
+
+      globalThis.fetch = vi.fn().mockImplementation(() => {
+        callCount++;
+        return Promise.resolve({
+          ok: true,
+          status: 200,
+          json: () => Promise.resolve({
+            jsonrpc: '2.0',
+            id: callCount,
+            error: { code: -32005, message: 'rate limit exceeded' },
+          }),
+        });
+      });
+
+      await expect(client.request('eth_chainId')).rejects.toThrow('rate limit exceeded');
+      expect(callCount).toBe(3); // Initial + 2 retries
     });
   });
 });
