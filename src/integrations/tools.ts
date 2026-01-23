@@ -512,10 +512,11 @@ Spending limits apply.`,
         try {
           const stablecoin = resolveStablecoin(params['token'] as string);
           if (!stablecoin) {
+            const tokenName = String(params['token']);
             return {
               success: false,
-              error: `Unknown stablecoin: ${params['token']}. Supported: USDC, USDT, USDS, DAI, PYUSD, FRAX`,
-              summary: `Unknown stablecoin: ${params['token']}`,
+              error: `Unknown stablecoin: ${tokenName}. Supported: USDC, USDT, USDS, DAI, PYUSD, FRAX`,
+              summary: `Unknown stablecoin: ${tokenName}`,
             };
           }
 
@@ -566,10 +567,11 @@ Spending limits apply.`,
         try {
           const stablecoin = resolveStablecoin(params['token'] as string);
           if (!stablecoin) {
+            const tokenName = String(params['token']);
             return {
               success: false,
-              error: `Unknown stablecoin: ${params['token']}`,
-              summary: `Unknown stablecoin: ${params['token']}`,
+              error: `Unknown stablecoin: ${tokenName}`,
+              summary: `Unknown stablecoin: ${tokenName}`,
             };
           }
 
@@ -686,10 +688,11 @@ Returns a tracking ID to monitor bridge progress.`,
         try {
           const stablecoin = resolveStablecoin(params['token'] as string);
           if (!stablecoin) {
+            const tokenName = String(params['token']);
             return {
               success: false,
-              error: `Unknown stablecoin: ${params['token']}. Supported for bridging: USDC, USDT, DAI`,
-              summary: `Unknown stablecoin: ${params['token']}`,
+              error: `Unknown stablecoin: ${tokenName}. Supported for bridging: USDC, USDT, DAI`,
+              summary: `Unknown stablecoin: ${tokenName}`,
             };
           }
 
@@ -765,24 +768,26 @@ Returns a tracking ID to monitor bridge progress.`,
         try {
           const stablecoin = resolveStablecoin(params['token'] as string);
           if (!stablecoin) {
+            const tokenName = String(params['token']);
             return {
               success: false,
-              error: `Unknown stablecoin: ${params['token']}`,
-              summary: `Unknown stablecoin: ${params['token']}`,
+              error: `Unknown stablecoin: ${tokenName}`,
+              summary: `Unknown stablecoin: ${tokenName}`,
             };
           }
 
+          const destChainId = params['destinationChainId'] as number;
           const preview = await wallet.previewBridgeWithRouter({
             token: stablecoin,
             amount: params['amount'] as string,
-            destinationChainId: params['destinationChainId'] as number,
+            destinationChainId: destChainId,
             preference: {
               priority: (params['priority'] as 'cost' | 'speed') || 'cost',
             },
           });
 
-          const destChainName = SUPPORTED_CHAINS[params['destinationChainId'] as number] ||
-            `Chain ${params['destinationChainId']}`;
+          const destChainName = SUPPORTED_CHAINS[destChainId] ||
+            `Chain ${String(destChainId)}`;
 
           if (preview.canBridge) {
             const summary = `Can bridge ${preview.amount.formatted} ${stablecoin.symbol} to ${destChainName}. ` +
@@ -842,10 +847,11 @@ Returns a tracking ID to monitor bridge progress.`,
         try {
           const stablecoin = resolveStablecoin(params['token'] as string);
           if (!stablecoin) {
+            const tokenName = String(params['token']);
             return {
               success: false,
-              error: `Unknown stablecoin: ${params['token']}`,
-              summary: `Unknown stablecoin: ${params['token']}`,
+              error: `Unknown stablecoin: ${tokenName}`,
+              summary: `Unknown stablecoin: ${tokenName}`,
             };
           }
 
