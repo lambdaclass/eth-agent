@@ -16,6 +16,16 @@ export {
   type BridgeProtocol,
   type BridgeLimits,
   type BridgeSpendingRecord,
+  // Router types
+  type RoutePreference,
+  type BridgeQuote,
+  type BridgeRouteComparison,
+  type BridgeProtocolInfo,
+  type BridgeFeeEstimate,
+  type BridgeProtocolV2,
+  type UnifiedBridgeResult,
+  type UnifiedBridgeStatus,
+  type BridgePreview,
 } from './types.js';
 
 // Constants
@@ -43,7 +53,50 @@ export {
   BridgeNoRouteError,
   BridgeAllRoutesFailed,
   BridgeProtocolUnavailableError,
+  BridgeQuoteExpiredError,
+  BridgeValidationError,
+  BridgeInsufficientLiquidityError,
+  BridgeSlippageExceededError,
+  type BridgeRecoveryInfo,
 } from './errors.js';
+
+// Router
+export {
+  BridgeRouter,
+  createBridgeRouter,
+  RouteSelector,
+  createRouteSelector,
+  ExplainBridge,
+  createExplainer,
+  // Tracking
+  TrackingRegistry,
+  createTrackingId,
+  parseTrackingId,
+  isValidTrackingId,
+  getTrackingRegistry,
+  // Validation
+  BridgeValidator,
+  createBridgeValidator,
+  getDefaultValidator,
+  validateRecipient,
+  validateBridgeRequest,
+  // Types
+  type BridgeRouterConfig,
+  type RouteInfo,
+  type ProtocolRegistryEntry,
+  type WaitOptions,
+  type ScoredQuote,
+  type SimpleBridgeOptions,
+  type ScoringWeights,
+  type ExplanationLevel,
+  type ProtocolTrackingInfo,
+  type ParsedTrackingId,
+  type CreateTrackingIdOptions,
+  type ValidationResult,
+  type ValidationError,
+  type ValidationWarning,
+  type BridgeValidatorConfig,
+} from './router/index.js';
 
 // CCTP implementation
 export {
