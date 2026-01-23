@@ -6,6 +6,7 @@
 import type { Address, Hash, Hex } from '../core/types.js';
 import type { RPCClient } from '../protocol/rpc.js';
 import { keccak256 } from '../core/hash.js';
+import { type Logger, noopLogger } from '../core/logger.js';
 import {
   type StablecoinInfo,
   STABLECOINS,
@@ -37,6 +38,7 @@ export interface PaymentWatcherConfig {
   tokens?: StablecoinInfo[];  // Specific tokens to watch, defaults to all stablecoins
   pollingInterval?: number;   // Milliseconds between polls, default 12000 (12s, ~1 block)
   fromBlock?: number | 'latest';
+  logger?: Logger;            // Optional logger for structured logging
 }
 
 export type PaymentHandler = (payment: IncomingPayment) => void | Promise<void>;
@@ -56,6 +58,7 @@ export class PaymentWatcher {
   private readonly address: Address;
   private readonly tokens: StablecoinInfo[];
   private readonly pollingInterval: number;
+  private readonly logger: Logger;
   private lastProcessedBlock: number;
   private chainId: number | null = null;
   private pollTimer: ReturnType<typeof setInterval> | null = null;
@@ -68,6 +71,7 @@ export class PaymentWatcher {
     this.tokens = config.tokens ?? Object.values(STABLECOINS);
     this.pollingInterval = config.pollingInterval ?? 12000;
     this.lastProcessedBlock = typeof config.fromBlock === 'number' ? config.fromBlock : 0;
+    this.logger = config.logger ?? noopLogger;
   }
 
   /**
@@ -80,9 +84,9 @@ export class PaymentWatcher {
     this.running = true;
 
     // Start polling
-    this.poll().catch(console.error);
+    this.poll().catch((err) => this.logger.error('Poll failed', { error: String(err) }));
     this.pollTimer = setInterval(() => {
-      this.poll().catch(console.error);
+      this.poll().catch((err) => this.logger.error('Poll failed', { error: String(err) }));
     }, this.pollingInterval);
   }
 
@@ -105,7 +109,25 @@ export class PaymentWatcher {
     const timeout = options.timeout ?? 60000;
 
     return new Promise((resolve, reject) => {
+      let timeoutId: ReturnType<typeof setTimeout> | null = null;
+      let resolved = false;
+
+      const cleanup = (): void => {
+        resolved = true;
+        if (timeoutId !== null) {
+          clearTimeout(timeoutId);
+          timeoutId = null;
+        }
+        this.handlers.delete(handler);
+        if (this.handlers.size === 0) {
+          this.stop();
+        }
+      };
+
       const handler: PaymentHandler = (payment) => {
+        // Already resolved (e.g., by timeout)
+        if (resolved) return;
+
         // Check filters
         if (options.token && payment.token.symbol !== options.token.symbol) {
           return;
@@ -118,10 +140,7 @@ export class PaymentWatcher {
         }
 
         // Payment matches criteria
-        this.handlers.delete(handler);
-        if (this.handlers.size === 0) {
-          this.stop();
-        }
+        cleanup();
         resolve(payment);
       };
 
@@ -129,12 +148,9 @@ export class PaymentWatcher {
       this.start(handler);
 
       // Set timeout
-      setTimeout(() => {
-        if (this.handlers.has(handler)) {
-          this.handlers.delete(handler);
-          if (this.handlers.size === 0) {
-            this.stop();
-          }
+      timeoutId = setTimeout(() => {
+        if (!resolved) {
+          cleanup();
           reject(new Error(`Timeout waiting for payment after ${timeout}ms`));
         }
       }, timeout);
@@ -216,14 +232,23 @@ export class PaymentWatcher {
           try {
             await handler(payment);
           } catch (err) {
-            console.error('Payment handler error:', err);
+            this.logger.error('Payment handler error', {
+              error: String(err),
+              transactionHash: payment.transactionHash,
+              token: payment.token.symbol,
+              amount: payment.formattedAmount,
+            });
           }
         }
       }
 
       return payments;
     } catch (err) {
-      console.error('Payment watcher poll error:', err);
+      this.logger.error('Payment watcher poll error', {
+        error: String(err),
+        address: this.address,
+        lastProcessedBlock: this.lastProcessedBlock,
+      });
       return [];
     }
   }

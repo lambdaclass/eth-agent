@@ -165,6 +165,56 @@ console.log(limits.allowedTokens);           // ['ETH', 'USDC', ...] or null
 console.log(limits.blockedTokens);           // ['SCAM_TOKEN']
 ```
 
+### Bridge Limits
+
+Cross-chain bridging has separate limits to control USDC transfers between chains:
+
+```typescript
+const wallet = AgentWallet.create({
+  privateKey: KEY,
+  limits: {
+    perTransaction: '0.1 ETH',
+    perDay: '5 ETH',
+    bridge: {
+      perTransactionUSD: '1000',    // Max $1000 per bridge
+      perDayUSD: '10000',           // Max $10,000 per day
+      allowedDestinations: [        // Whitelist destination chains
+        42161,  // Arbitrum
+        8453,   // Base
+        10,     // Optimism
+      ],
+    },
+  },
+});
+```
+
+#### Checking Bridge Limits
+
+```typescript
+const bridgeLimits = wallet.getBridgeLimits();
+
+console.log(bridgeLimits.daily.limit);      // "10000"
+console.log(bridgeLimits.daily.spent);      // "2500"
+console.log(bridgeLimits.daily.remaining);  // "7500"
+```
+
+#### Bridge Limit Errors
+
+```json
+{
+  "code": "BRIDGE_LIMIT_EXCEEDED",
+  "message": "Bridge amount exceeds daily limit",
+  "suggestion": "Reduce amount to 7500 USDC or wait until tomorrow"
+}
+```
+
+```json
+{
+  "code": "BRIDGE_DESTINATION_NOT_ALLOWED",
+  "message": "Destination chain 137 is not in allowed list",
+  "suggestion": "Use one of the allowed destination chains: Arbitrum, Base, Optimism"
+}
+```
 ## Emergency Stop
 
 Halt all operations if balance drops too low:
