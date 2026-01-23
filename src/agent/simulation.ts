@@ -71,7 +71,7 @@ export class SimulationEngine {
       let gasUsed: bigint;
       try {
         gasUsed = await this.rpc.estimateGas(callParams);
-      } catch (err) {
+      } catch (_err) {
         // eth_estimateGas can fail even if eth_call succeeds
         // Use provided gasLimit or default
         gasUsed = tx.gasLimit ?? 21000n;
@@ -233,7 +233,7 @@ export class SimulationEngine {
  */
 export function explainSimulation(result: SimulationResult): string {
   if (result.success) {
-    const gasInfo = `Estimated gas: ${result.gasUsed.toLocaleString()}`;
+    const gasInfo = `Estimated gas: ${result.gasUsed.toLocaleString('en-US')}`;
     const logInfo = result.logs.length > 0 ? ` (${result.logs.length} events)` : '';
     return `Simulation successful. ${gasInfo}${logInfo}`;
   }

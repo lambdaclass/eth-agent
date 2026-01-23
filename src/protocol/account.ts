@@ -13,6 +13,7 @@ import {
   isValidPrivateKey,
 } from '../core/signature.js';
 import { bytesToHex } from '../core/hex.js';
+import { sha512 } from '@noble/hashes/sha512';
 
 export interface Account {
   readonly address: Address;
@@ -274,9 +275,6 @@ function pbkdf2Block(
  * Simplified implementation using SHA-512 from @noble/hashes
  */
 function hmacSha512(key: Uint8Array, data: Uint8Array): Uint8Array {
-  // Import dynamically to avoid issues
-  const { sha512 } = require('@noble/hashes/sha512') as { sha512: (data: Uint8Array) => Uint8Array };
-
   const blockSize = 128; // SHA-512 block size
   let keyPadded: Uint8Array;
 

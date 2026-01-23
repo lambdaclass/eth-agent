@@ -119,7 +119,7 @@ export const ZERO_ADDRESS: Address = '0x0000000000000000000000000000000000000000
 /**
  * Pad a hex value to 20 bytes (address length)
  */
-export function padToAddress(hex: Hex): Address {
+export function padToAddress(hex: string): Address {
   if (!isHex(hex)) {
     throw new Error(`Invalid hex value: ${hex}`);
   }
@@ -136,7 +136,7 @@ export function padToAddress(hex: Hex): Address {
 /**
  * Extract address from a 32-byte word (common in event logs and ABI encoding)
  */
-export function extractAddress(word: Hex): Address {
+export function extractAddress(word: string): Address {
   if (!isHex(word)) {
     throw new Error(`Invalid hex value: ${word}`);
   }

@@ -151,7 +151,7 @@ export function isKnownStablecoin(address: string, chainId: number): StablecoinI
   const normalizedAddress = address.toLowerCase();
   for (const info of Object.values(STABLECOINS)) {
     const stablecoinAddress = info.addresses[chainId];
-    if (stablecoinAddress && stablecoinAddress.toLowerCase() === normalizedAddress) {
+    if (stablecoinAddress?.toLowerCase() === normalizedAddress) {
       return info;
     }
   }
