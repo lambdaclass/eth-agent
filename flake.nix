@@ -4,10 +4,9 @@
   inputs = {
     nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
     flake-utils.url = "github:numtide/flake-utils";
-    foundry.url = "github:foundry-rs/foundry";
   };
 
-  outputs = { self, nixpkgs, flake-utils, foundry }:
+  outputs = { self, nixpkgs, flake-utils }:
     flake-utils.lib.eachDefaultSystem (system:
       let
         pkgs = nixpkgs.legacyPackages.${system};
@@ -23,7 +22,7 @@
             git
             gnumake
             # Foundry tools (forge, cast, anvil, chisel)
-            foundry.packages.${system}.default
+            foundry
           ];
 
           shellHook = ''
