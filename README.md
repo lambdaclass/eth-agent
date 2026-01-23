@@ -87,6 +87,7 @@ const balances = await wallet.getStablecoinBalances();
 
 | Token | Symbol | Chains |
 |-------|--------|--------|
+| Ether | `ETH` | Ethereum, Arbitrum, Optimism, Base, Polygon, Avalanche |
 | USD Coin | `USDC` | Ethereum, Arbitrum, Optimism, Base, Polygon, Avalanche |
 | Tether | `USDT` | Ethereum, Arbitrum, Optimism, Base, Polygon, Avalanche |
 | Sky USD | `USDS` | Ethereum, Base |
@@ -95,7 +96,7 @@ const balances = await wallet.getStablecoinBalances();
 | Dai | `DAI` | Ethereum, Arbitrum, Optimism, Base, Polygon |
 
 ```typescript
-import { USDC, USDT, USDS, PYUSD, FRAX, DAI } from '@lambdaclass/eth-agent';
+import { ETH, USDC, USDT, USDS, PYUSD, FRAX, DAI } from '@lambdaclass/eth-agent';
 ```
 
 ## Safety
