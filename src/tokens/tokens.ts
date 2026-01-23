@@ -19,6 +19,7 @@ import {
   isKnownStablecoin,
   parseStablecoinAmount,
   formatStablecoinAmount,
+  validateAmountInput,
 } from '../stablecoins/index.js';
 
 // Re-export stablecoin types and utilities for convenience
@@ -314,12 +315,14 @@ export function resolveToken(
 
 /**
  * Parse token amount from human-readable string
+ * @throws Error if amount is invalid (empty, negative, NaN, etc.)
  */
 export function parseTokenAmount(amount: string | number, token: TokenInfo): bigint {
-  const amountStr = typeof amount === 'number' ? amount.toString() : amount;
-  const [whole, fraction = ''] = amountStr.split('.');
+  const amountStr = validateAmountInput(amount, token.symbol);
+  const [whole = '0', fraction = ''] = amountStr.split('.');
+  const wholeNormalized = whole === '' ? '0' : whole;
   const paddedFraction = fraction.padEnd(token.decimals, '0').slice(0, token.decimals);
-  return BigInt(whole + paddedFraction);
+  return BigInt(wholeNormalized + paddedFraction);
 }
 
 /**

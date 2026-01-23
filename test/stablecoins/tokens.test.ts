@@ -175,6 +175,68 @@ describe('Stablecoin Tokens', () => {
         expect(parseStablecoinAmount('0.1', USDS)).toBe(100_000_000_000_000_000n);
       });
     });
+
+    describe('input validation', () => {
+      it('throws on empty string', () => {
+        expect(() => parseStablecoinAmount('', USDC)).toThrow('cannot be empty');
+      });
+
+      it('throws on whitespace only', () => {
+        expect(() => parseStablecoinAmount('   ', USDC)).toThrow('cannot be empty');
+      });
+
+      it('throws on negative amounts', () => {
+        expect(() => parseStablecoinAmount('-100', USDC)).toThrow('negative amounts are not allowed');
+        expect(() => parseStablecoinAmount(-50, USDC)).toThrow('negative amounts are not allowed');
+      });
+
+      it('throws on NaN', () => {
+        expect(() => parseStablecoinAmount(NaN, USDC)).toThrow('NaN is not a valid amount');
+      });
+
+      it('throws on Infinity', () => {
+        expect(() => parseStablecoinAmount(Infinity, USDC)).toThrow('Infinity is not a valid amount');
+        expect(() => parseStablecoinAmount(-Infinity, USDC)).toThrow('Infinity is not a valid amount');
+      });
+
+      it('throws on multiple decimal points', () => {
+        expect(() => parseStablecoinAmount('1.2.3', USDC)).toThrow('multiple decimal points');
+      });
+
+      it('throws on scientific notation', () => {
+        expect(() => parseStablecoinAmount('1e18', USDC)).toThrow('scientific notation is not supported');
+        expect(() => parseStablecoinAmount('1E10', USDC)).toThrow('scientific notation is not supported');
+      });
+
+      it('throws on invalid characters', () => {
+        expect(() => parseStablecoinAmount('abc', USDC)).toThrow('invalid characters');
+        expect(() => parseStablecoinAmount('$100', USDC)).toThrow('invalid characters');
+        expect(() => parseStablecoinAmount('100 USDC', USDC)).toThrow('invalid characters');
+      });
+
+      it('throws on just a decimal point', () => {
+        expect(() => parseStablecoinAmount('.', USDC)).toThrow('cannot be just a decimal point');
+      });
+
+      it('handles commas in amounts (strips them)', () => {
+        expect(parseStablecoinAmount('1,000', USDC)).toBe(1_000_000_000n);
+        expect(parseStablecoinAmount('1,000,000.50', USDC)).toBe(1_000_000_500_000n);
+      });
+
+      it('trims whitespace', () => {
+        expect(parseStablecoinAmount('  100  ', USDC)).toBe(100_000_000n);
+        expect(parseStablecoinAmount('\t50.5\n', USDC)).toBe(50_500_000n);
+      });
+
+      it('handles decimal starting with dot', () => {
+        expect(parseStablecoinAmount('.5', USDC)).toBe(500_000n);
+        expect(parseStablecoinAmount('.123456', USDC)).toBe(123_456n);
+      });
+
+      it('handles trailing decimal point', () => {
+        expect(parseStablecoinAmount('100.', USDC)).toBe(100_000_000n);
+      });
+    });
   });
 
   describe('formatStablecoinAmount', () => {

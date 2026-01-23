@@ -159,14 +159,79 @@ export function isKnownStablecoin(address: string, chainId: number): StablecoinI
 }
 
 /**
+ * Validate and normalize an amount string
+ * @returns normalized amount string or throws with reason
+ */
+export function validateAmountInput(amount: string | number, tokenSymbol: string): string {
+  // Handle number input
+  if (typeof amount === 'number') {
+    if (Number.isNaN(amount)) {
+      throw new Error(`Invalid ${tokenSymbol} amount: NaN is not a valid amount`);
+    }
+    if (!Number.isFinite(amount)) {
+      throw new Error(`Invalid ${tokenSymbol} amount: Infinity is not a valid amount`);
+    }
+    if (amount < 0) {
+      throw new Error(`Invalid ${tokenSymbol} amount: negative amounts are not allowed`);
+    }
+    return amount.toString();
+  }
+
+  // Handle string input
+  const trimmed = amount.trim();
+
+  if (trimmed === '') {
+    throw new Error(`Invalid ${tokenSymbol} amount: amount cannot be empty`);
+  }
+
+  // Remove commas (common in formatted numbers like "1,000.50")
+  const normalized = trimmed.replace(/,/g, '');
+
+  // Check for negative sign
+  if (normalized.startsWith('-')) {
+    throw new Error(`Invalid ${tokenSymbol} amount: negative amounts are not allowed`);
+  }
+
+  // Check for multiple decimal points
+  const decimalCount = (normalized.match(/\./g) ?? []).length;
+  if (decimalCount > 1) {
+    throw new Error(`Invalid ${tokenSymbol} amount: multiple decimal points found`);
+  }
+
+  // Check for scientific notation (not supported for precision reasons)
+  if (/[eE]/.test(normalized)) {
+    throw new Error(`Invalid ${tokenSymbol} amount: scientific notation is not supported`);
+  }
+
+  // Check that it's a valid number pattern (digits, optional decimal, more digits)
+  if (!/^\d*\.?\d*$/.test(normalized)) {
+    throw new Error(`Invalid ${tokenSymbol} amount: contains invalid characters`);
+  }
+
+  // Check it's not just a decimal point
+  if (normalized === '.') {
+    throw new Error(`Invalid ${tokenSymbol} amount: amount cannot be just a decimal point`);
+  }
+
+  // Ensure there's at least one digit
+  if (!/\d/.test(normalized)) {
+    throw new Error(`Invalid ${tokenSymbol} amount: no digits found`);
+  }
+
+  return normalized;
+}
+
+/**
  * Parse stablecoin amount from human-readable string
  * Handles decimals correctly (USDC=6, USDS=18)
+ * @throws Error if amount is invalid (empty, negative, NaN, etc.)
  */
 export function parseStablecoinAmount(amount: string | number, stablecoin: StablecoinInfo): bigint {
-  const amountStr = typeof amount === 'number' ? amount.toString() : amount;
-  const [whole, fraction = ''] = amountStr.split('.');
+  const amountStr = validateAmountInput(amount, stablecoin.symbol);
+  const [whole = '0', fraction = ''] = amountStr.split('.');
+  const wholeNormalized = whole === '' ? '0' : whole;
   const paddedFraction = fraction.padEnd(stablecoin.decimals, '0').slice(0, stablecoin.decimals);
-  return BigInt(whole + paddedFraction);
+  return BigInt(wholeNormalized + paddedFraction);
 }
 
 /**
