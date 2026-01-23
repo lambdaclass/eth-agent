@@ -1,0 +1,236 @@
+# Safety Guide
+
+eth-agent's safety features are not optional middleware—they are foundational to the execution model. This guide explains how to configure them for your threat model.
+
+## Why Safety Matters for Agents
+
+Traditional Ethereum libraries assume a human reviews each transaction. AI agents introduce new failure modes:
+
+- **Hallucination**: An LLM might fabricate addresses or amounts
+- **Unbounded spending**: A loop could drain your wallet
+- **Silent failures**: Cryptic errors leave agents unable to recover
+- **No oversight**: Autonomous operation without human checkpoints
+
+eth-agent addresses each of these with architectural constraints.
+
+## Spending Limits
+
+### Configuration
+
+```typescript
+const wallet = AgentWallet.create({
+  privateKey: KEY,
+  limits: {
+    perTransaction: '0.1 ETH',  // Max per single transaction
+    perHour: '1 ETH',           // Rolling hourly cap
+    perDay: '5 ETH',            // Rolling daily cap
+  },
+});
+```
+
+### Enforcement
+
+Limits are enforced at the library level. An agent cannot bypass them:
+
+```typescript
+// This will throw TRANSACTION_LIMIT_EXCEEDED
+await wallet.send({ to: addr, amount: '0.5 ETH' });
+
+// This will throw DAILY_LIMIT_EXCEEDED after enough transactions
+for (let i = 0; i < 100; i++) {
+  await wallet.send({ to: addr, amount: '0.1 ETH' });
+}
+```
+
+### Checking Limits
+
+```typescript
+const limits = wallet.getLimits();
+
+console.log(limits.perTransaction.limit);  // "0.1"
+console.log(limits.hourly.used);           // "0.3"
+console.log(limits.hourly.remaining);      // "0.7"
+console.log(limits.daily.used);            // "1.2"
+console.log(limits.daily.remaining);       // "3.8"
+```
+
+## Emergency Stop
+
+Halt all operations if balance drops too low:
+
+```typescript
+const wallet = AgentWallet.create({
+  privateKey: KEY,
+  limits: {
+    perTransaction: '0.1 ETH',
+    emergencyStop: {
+      minBalanceRequired: '0.05 ETH',
+    },
+  },
+});
+```
+
+When triggered:
+```json
+{
+  "code": "EMERGENCY_STOP",
+  "message": "Wallet is stopped: Balance below minimum threshold",
+  "suggestion": "Contact administrator to review and resume operations"
+}
+```
+
+## Human Approval
+
+### Basic Configuration
+
+```typescript
+const wallet = AgentWallet.create({
+  privateKey: KEY,
+  onApprovalRequired: async (request) => {
+    console.log(`Summary: ${request.summary}`);
+    console.log(`Details:`, request.details);
+    return await yourApprovalSystem.ask(request);
+  },
+  approvalConfig: {
+    requireApprovalWhen: {
+      amountExceeds: '0.1 ETH',
+      recipientIsNew: true,
+    },
+  },
+});
+```
+
+### Approval Request Structure
+
+```typescript
+interface ApprovalRequest {
+  summary: string;  // "Send 0.5 ETH to 0x1234...5678"
+  details: {
+    to: Address;
+    amount: { wei: bigint; eth: string };
+    estimatedGas: { wei: bigint; eth: string };
+    total: { wei: bigint; eth: string };
+    recipient: {
+      isTrusted: boolean;
+      isNew: boolean;
+      label?: string;
+    };
+  };
+}
+```
+
+### Integration Examples
+
+**Slack:**
+```typescript
+onApprovalRequired: async (request) => {
+  const response = await slack.postMessage({
+    channel: '#approvals',
+    text: `Approve: ${request.summary}`,
+    attachments: [{ fields: formatDetails(request.details) }],
+  });
+  return await waitForReaction(response.ts, '✅');
+}
+```
+
+**Email:**
+```typescript
+onApprovalRequired: async (request) => {
+  await sendEmail({
+    to: 'treasury@company.com',
+    subject: `Approval Required: ${request.summary}`,
+    body: formatApprovalEmail(request),
+  });
+  return await waitForApprovalToken(request.id);
+}
+```
+
+## Address Policies
+
+### Trusted Addresses
+
+Skip approval for known-good addresses:
+
+```typescript
+const wallet = AgentWallet.create({
+  privateKey: KEY,
+  trustedAddresses: [
+    { address: '0x1234...5678', label: 'Company Treasury' },
+    { address: 'treasury.company.eth', label: 'ENS Treasury' },
+  ],
+});
+```
+
+### Blocked Addresses
+
+Prevent transactions to known-bad addresses:
+
+```typescript
+const wallet = AgentWallet.create({
+  privateKey: KEY,
+  blockedAddresses: [
+    { address: '0xdead...beef', reason: 'Known scam' },
+    { address: '0x0000...0000', reason: 'Burn address' },
+  ],
+});
+```
+
+Blocked transactions throw:
+```json
+{
+  "code": "BLOCKED_ADDRESS",
+  "message": "Address 0xdead...beef is blocked: Known scam",
+  "suggestion": "This address cannot receive funds. Use a different recipient"
+}
+```
+
+## Safety Presets
+
+Pre-configured profiles for common use cases:
+
+| Preset | Per-TX | Hourly | Daily | Approval |
+|--------|--------|--------|-------|----------|
+| `CONSERVATIVE` | 0.01 ETH | 0.1 ETH | 0.5 ETH | Always |
+| `BALANCED` | 0.1 ETH | 1 ETH | 5 ETH | >0.1 ETH or new |
+| `AGGRESSIVE` | 1 ETH | 10 ETH | 50 ETH | >1 ETH |
+| `UNLIMITED` | 1M ETH | 1M ETH | 1M ETH | Never (testing only) |
+
+```typescript
+import { SafetyPresets } from '@lambdaclass/eth-agent';
+
+const wallet = AgentWallet.create({
+  privateKey: KEY,
+  ...SafetyPresets.BALANCED,
+});
+```
+
+## Transaction Simulation
+
+All transactions are simulated before execution:
+
+```typescript
+const wallet = AgentWallet.create({
+  privateKey: KEY,
+  requireSimulation: true,  // Default: true
+});
+```
+
+Simulation catches:
+- Reverts (with decoded reason)
+- Insufficient balance
+- Gas estimation failures
+- Contract state issues
+
+## Best Practices
+
+1. **Start conservative**: Begin with `SafetyPresets.CONSERVATIVE` and relax limits as you gain confidence.
+
+2. **Always require approval for new recipients**: Hallucinated addresses are a real risk.
+
+3. **Set emergency stop thresholds**: Prevent complete drainage.
+
+4. **Log all transactions**: Even successful ones, for audit trails.
+
+5. **Test limits in staging**: Verify your limits match your threat model before production.
+
+6. **Review blocked address lists**: Keep them updated with known scam addresses.

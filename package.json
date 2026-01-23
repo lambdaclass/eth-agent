@@ -1,0 +1,107 @@
+{
+  "name": "@lambdaclass/eth-agent",
+  "version": "0.1.0",
+  "description": "The simplest, safest way for AI agents to use Ethereum",
+  "type": "module",
+  "main": "./dist/index.cjs",
+  "module": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js",
+      "require": "./dist/index.cjs"
+    },
+    "./core": {
+      "types": "./dist/core/index.d.ts",
+      "import": "./dist/core/index.js",
+      "require": "./dist/core/index.cjs"
+    },
+    "./protocol": {
+      "types": "./dist/protocol/index.d.ts",
+      "import": "./dist/protocol/index.js",
+      "require": "./dist/protocol/index.cjs"
+    },
+    "./mcp": {
+      "types": "./dist/integrations/mcp/index.d.ts",
+      "import": "./dist/integrations/mcp/index.js",
+      "require": "./dist/integrations/mcp/index.cjs"
+    },
+    "./anthropic": {
+      "types": "./dist/integrations/anthropic.d.ts",
+      "import": "./dist/integrations/anthropic.js",
+      "require": "./dist/integrations/anthropic.cjs"
+    },
+    "./openai": {
+      "types": "./dist/integrations/openai.d.ts",
+      "import": "./dist/integrations/openai.js",
+      "require": "./dist/integrations/openai.cjs"
+    },
+    "./langchain": {
+      "types": "./dist/integrations/langchain.d.ts",
+      "import": "./dist/integrations/langchain.js",
+      "require": "./dist/integrations/langchain.cjs"
+    }
+  },
+  "sideEffects": false,
+  "files": [
+    "dist",
+    "README.md",
+    "LICENSE-MIT",
+    "LICENSE-APACHE"
+  ],
+  "scripts": {
+    "build": "tsup",
+    "dev": "tsup --watch",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "test:coverage": "vitest run --coverage",
+    "test:property": "vitest run --config vitest.property.config.ts",
+    "test:fuzz": "vitest run --config vitest.fuzz.config.ts",
+    "test:e2e": "vitest run test/e2e --config vitest.e2e.config.ts",
+    "lint": "eslint src test --ext .ts",
+    "lint:fix": "eslint src test --ext .ts --fix",
+    "typecheck": "tsc --noEmit",
+    "clean": "rm -rf dist coverage",
+    "prepublishOnly": "npm run build"
+  },
+  "keywords": [
+    "ethereum",
+    "ai",
+    "agent",
+    "blockchain",
+    "web3",
+    "crypto",
+    "wallet",
+    "safety",
+    "mcp",
+    "langchain",
+    "anthropic",
+    "openai"
+  ],
+  "author": "",
+  "license": "(MIT OR Apache-2.0)",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/lambdaclass/eth-agent"
+  },
+  "dependencies": {
+    "@noble/hashes": "^1.7.1",
+    "@noble/secp256k1": "^2.2.3"
+  },
+  "devDependencies": {
+    "@eslint/js": "^9.19.0",
+    "@fast-check/vitest": "^0.2.4",
+    "@types/node": "^22.10.10",
+    "@vitest/coverage-v8": "^3.0.4",
+    "eslint": "^9.19.0",
+    "fast-check": "^4.5.3",
+    "tsup": "^8.3.6",
+    "typescript": "^5.7.3",
+    "typescript-eslint": "^8.23.0",
+    "vitest": "^3.0.4"
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}
