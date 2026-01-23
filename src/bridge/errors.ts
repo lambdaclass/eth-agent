@@ -212,3 +212,81 @@ export class BridgeApprovalError extends BridgeError {
     this.name = 'BridgeApprovalError';
   }
 }
+
+/**
+ * Error thrown when no route is available for a bridge request
+ */
+export class BridgeNoRouteError extends BridgeError {
+  constructor(config: {
+    sourceChainId: number;
+    destinationChainId: number;
+    token: string;
+    checkedProtocols?: string[];
+  }) {
+    const protocolsInfo = config.checkedProtocols?.length
+      ? ` Checked protocols: ${config.checkedProtocols.join(', ')}.`
+      : '';
+
+    super({
+      code: 'BRIDGE_NO_ROUTE',
+      message: `No bridge route available for ${config.token} from chain ${String(config.sourceChainId)} to chain ${String(config.destinationChainId)}.${protocolsInfo}`,
+      details: config,
+      suggestion: 'Try a different destination chain or check if the token is supported',
+      retryable: false,
+    });
+    this.name = 'BridgeNoRouteError';
+  }
+}
+
+/**
+ * Error thrown when all bridge routes fail during execution
+ */
+export class BridgeAllRoutesFailed extends BridgeError {
+  constructor(config: {
+    sourceChainId: number;
+    destinationChainId: number;
+    token: string;
+    failures: Array<{ protocol: string; error: string }>;
+  }) {
+    const failureDetails = config.failures
+      .map((f) => `${f.protocol}: ${f.error}`)
+      .join('; ');
+
+    super({
+      code: 'BRIDGE_ALL_ROUTES_FAILED',
+      message: `All bridge routes failed for ${config.token} from chain ${String(config.sourceChainId)} to chain ${String(config.destinationChainId)}. Failures: ${failureDetails}`,
+      details: config,
+      suggestion: 'Check individual protocol errors and try again later',
+      retryable: true,
+      retryAfter: 30000,
+    });
+    this.name = 'BridgeAllRoutesFailed';
+  }
+}
+
+/**
+ * Error thrown when a specific bridge protocol is unavailable
+ */
+export class BridgeProtocolUnavailableError extends BridgeError {
+  constructor(config: {
+    protocol: string;
+    reason: string;
+    alternativeProtocols?: string[];
+  }) {
+    const alternativesInfo = config.alternativeProtocols?.length
+      ? ` Available alternatives: ${config.alternativeProtocols.join(', ')}.`
+      : '';
+
+    super({
+      code: 'BRIDGE_PROTOCOL_UNAVAILABLE',
+      message: `Bridge protocol "${config.protocol}" is unavailable: ${config.reason}.${alternativesInfo}`,
+      details: config,
+      suggestion: config.alternativeProtocols?.length
+        ? `Try using one of the alternative protocols: ${config.alternativeProtocols.join(', ')}`
+        : 'Try again later or use a different bridge protocol',
+      retryable: true,
+      retryAfter: 10000,
+    });
+    this.name = 'BridgeProtocolUnavailableError';
+  }
+}

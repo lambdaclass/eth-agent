@@ -9,6 +9,9 @@ import {
   BridgeSameChainError,
   BridgeCompletionError,
   BridgeApprovalError,
+  BridgeNoRouteError,
+  BridgeAllRoutesFailed,
+  BridgeProtocolUnavailableError,
 } from '../../src/bridge/errors.js';
 
 describe('Bridge Errors', () => {
@@ -163,6 +166,96 @@ describe('Bridge Errors', () => {
       expect(error.message).toContain('USDC');
       expect(error.message).toContain('Insufficient balance');
       expect(error.retryable).toBe(true);
+    });
+  });
+
+  describe('BridgeNoRouteError', () => {
+    it('should create error with route details', () => {
+      const error = new BridgeNoRouteError({
+        sourceChainId: 1,
+        destinationChainId: 42161,
+        token: 'USDC',
+      });
+
+      expect(error.code).toBe('BRIDGE_NO_ROUTE');
+      expect(error.message).toContain('USDC');
+      expect(error.message).toContain('1');
+      expect(error.message).toContain('42161');
+      expect(error.retryable).toBe(false);
+      expect(error.name).toBe('BridgeNoRouteError');
+    });
+
+    it('should include checked protocols in message', () => {
+      const error = new BridgeNoRouteError({
+        sourceChainId: 1,
+        destinationChainId: 42161,
+        token: 'USDC',
+        checkedProtocols: ['CCTP', 'Stargate'],
+      });
+
+      expect(error.message).toContain('CCTP');
+      expect(error.message).toContain('Stargate');
+    });
+  });
+
+  describe('BridgeAllRoutesFailed', () => {
+    it('should create error with failure details', () => {
+      const error = new BridgeAllRoutesFailed({
+        sourceChainId: 1,
+        destinationChainId: 42161,
+        token: 'USDC',
+        failures: [
+          { protocol: 'CCTP', error: 'Attestation unavailable' },
+          { protocol: 'Stargate', error: 'Insufficient liquidity' },
+        ],
+      });
+
+      expect(error.code).toBe('BRIDGE_ALL_ROUTES_FAILED');
+      expect(error.message).toContain('USDC');
+      expect(error.message).toContain('CCTP');
+      expect(error.message).toContain('Attestation unavailable');
+      expect(error.message).toContain('Stargate');
+      expect(error.message).toContain('Insufficient liquidity');
+      expect(error.retryable).toBe(true);
+      expect(error.retryAfter).toBe(30000);
+      expect(error.name).toBe('BridgeAllRoutesFailed');
+    });
+  });
+
+  describe('BridgeProtocolUnavailableError', () => {
+    it('should create error with protocol details', () => {
+      const error = new BridgeProtocolUnavailableError({
+        protocol: 'CCTP',
+        reason: 'Service maintenance',
+      });
+
+      expect(error.code).toBe('BRIDGE_PROTOCOL_UNAVAILABLE');
+      expect(error.message).toContain('CCTP');
+      expect(error.message).toContain('Service maintenance');
+      expect(error.retryable).toBe(true);
+      expect(error.retryAfter).toBe(10000);
+      expect(error.name).toBe('BridgeProtocolUnavailableError');
+    });
+
+    it('should include alternative protocols in message and suggestion', () => {
+      const error = new BridgeProtocolUnavailableError({
+        protocol: 'CCTP',
+        reason: 'Service maintenance',
+        alternativeProtocols: ['Stargate', 'Across'],
+      });
+
+      expect(error.message).toContain('Stargate');
+      expect(error.message).toContain('Across');
+      expect(error.suggestion).toContain('Stargate');
+    });
+
+    it('should have generic suggestion when no alternatives', () => {
+      const error = new BridgeProtocolUnavailableError({
+        protocol: 'CCTP',
+        reason: 'Service maintenance',
+      });
+
+      expect(error.suggestion).toContain('Try again later');
     });
   });
 });
