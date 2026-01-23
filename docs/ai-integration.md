@@ -14,6 +14,9 @@ Each integration exposes the same core operations:
 | `get_token_balance` | Check ERC-20 token balance |
 | `transfer_token` | Transfer ERC-20 tokens |
 | `get_capabilities` | Get wallet info and limits |
+| `eth_swap` | Swap tokens using Uniswap V3 |
+| `eth_getSwapQuote` | Get a quote before swapping |
+| `eth_getSwapLimits` | Check swap limits and remaining allowance |
 
 Safety limits apply regardless of which framework invokes the tools.
 
@@ -53,6 +56,7 @@ async function chat(userMessage: string) {
 // Example usage
 await chat('What is my ETH balance?');
 await chat('Send 0.01 ETH to vitalik.eth');
+await chat('Swap 100 USDC for ETH');
 ```
 
 ### Tool Definitions
@@ -260,35 +264,143 @@ When approval is required, the tool execution pauses until a human approves:
 // → Returns result or ApprovalDeniedError
 ```
 
+## Token Swap Tools
+
+The swap tools allow AI agents to execute token swaps using Uniswap V3 with built-in safety limits.
+
+### eth_swap
+
+Execute a token swap:
+
+```typescript
+// Tool call from AI
+{
+  name: 'eth_swap',
+  input: {
+    fromToken: 'USDC',      // Token symbol or address
+    toToken: 'ETH',         // Token symbol or address
+    amount: '100',          // Amount in human-readable units
+    slippageTolerance: 0.5  // 0.5% max slippage (optional, default 0.5)
+  }
+}
+
+// Response
+{
+  success: true,
+  hash: '0xabc...',
+  summary: 'Swapped 100 USDC for 0.042 ETH',
+  swap: {
+    tokenIn: { symbol: 'USDC', amount: '100' },
+    tokenOut: { symbol: 'ETH', amount: '0.042' },
+    priceImpact: 0.12
+  }
+}
+```
+
+### eth_getSwapQuote
+
+Preview a swap before executing:
+
+```typescript
+// Tool call
+{
+  name: 'eth_getSwapQuote',
+  input: {
+    fromToken: 'ETH',
+    toToken: 'USDC',
+    amount: '0.1'
+  }
+}
+
+// Response
+{
+  fromToken: { symbol: 'ETH', amount: '0.1' },
+  toToken: { symbol: 'USDC', amount: '238.45' },
+  amountOutMinimum: '237.26',  // After 0.5% slippage
+  priceImpact: 0.08,
+  route: 'ETH → USDC (0.3% fee pool)'
+}
+```
+
+### eth_getSwapLimits
+
+Check swap spending limits:
+
+```typescript
+// Tool call
+{ name: 'eth_getSwapLimits', input: {} }
+
+// Response
+{
+  perTransaction: { limit: '5000', unit: 'USD' },
+  daily: { limit: '50000', used: '1200', remaining: '48800', unit: 'USD' },
+  maxSlippagePercent: 1,
+  maxPriceImpactPercent: 5,
+  allowedTokens: ['ETH', 'USDC', 'USDT', 'WETH']
+}
+```
+
+### Example AI Conversation with Swaps
+
+```
+User: "I have 500 USDC. Can you swap half of it for ETH?"
+
+AI: Let me first get a quote for swapping 250 USDC to ETH.
+    [calls eth_getSwapQuote({ fromToken: 'USDC', toToken: 'ETH', amount: '250' })]
+
+    The quote shows you'll receive approximately 0.105 ETH for 250 USDC,
+    with a price impact of 0.05%. Would you like me to proceed?
+
+User: "Yes, go ahead"
+
+AI: [calls eth_swap({ fromToken: 'USDC', toToken: 'ETH', amount: '250', slippageTolerance: 0.5 })]
+
+    Done! I swapped 250 USDC for 0.1048 ETH.
+    Transaction: 0xabc...
+```
+
 ## Building Custom Tools
 
-Create domain-specific tools using the base wallet:
+Create domain-specific tools that extend the built-in capabilities:
 
 ```typescript
 import { AgentWallet } from '@lambdaclass/eth-agent';
 
-function createDeFiTools(wallet: AgentWallet) {
+function createAdvancedDeFiTools(wallet: AgentWallet) {
   return {
     definitions: [
       {
-        name: 'swap_tokens',
-        description: 'Swap tokens on Uniswap',
+        name: 'dollar_cost_average',
+        description: 'Execute a DCA strategy by splitting a large swap into smaller ones',
         parameters: {
           type: 'object',
           properties: {
             fromToken: { type: 'string' },
             toToken: { type: 'string' },
-            amount: { type: 'string' },
-            slippage: { type: 'number', default: 0.5 },
+            totalAmount: { type: 'string' },
+            numSwaps: { type: 'number', description: 'Number of swaps to split into' },
           },
-          required: ['fromToken', 'toToken', 'amount'],
+          required: ['fromToken', 'toToken', 'totalAmount', 'numSwaps'],
         },
       },
     ],
-    execute: async (name: string, input: unknown) => {
-      if (name === 'swap_tokens') {
-        // Implement swap logic using wallet
-        return await executeSwap(wallet, input);
+    execute: async (name: string, input: any) => {
+      if (name === 'dollar_cost_average') {
+        const { fromToken, toToken, totalAmount, numSwaps } = input;
+        const amountPerSwap = (parseFloat(totalAmount) / numSwaps).toFixed(2);
+        const results = [];
+
+        for (let i = 0; i < numSwaps; i++) {
+          // Use built-in swap with safety limits
+          const result = await wallet.safeSwap({
+            fromToken,
+            toToken,
+            amount: amountPerSwap,
+          });
+          results.push(result);
+        }
+
+        return { swaps: results, totalSwaps: numSwaps };
       }
     },
   };
@@ -303,14 +415,28 @@ function createDeFiTools(wallet: AgentWallet) {
 
 3. **Use preview before send**: Have the LLM call `preview_transaction` before `send_transaction` for high-value operations.
 
-4. **Log all operations**: Enable logging for audit trails.
+4. **Get quotes before swapping**: Instruct the AI to call `eth_getSwapQuote` before `eth_swap` for any significant swap amount.
 
-5. **Test with testnets**: Use Sepolia or Goerli before mainnet.
+5. **Use token allowlists for swaps**: Restrict which tokens the AI can swap to prevent trading in unknown or scam tokens.
+
+6. **Log all operations**: Enable logging for audit trails.
+
+7. **Test with testnets**: Use Sepolia or Goerli before mainnet.
 
 ```typescript
 const wallet = AgentWallet.create({
   privateKey: KEY,
   network: 'sepolia',  // Use testnet
   ...SafetyPresets.CONSERVATIVE,
+  limits: {
+    ...SafetyPresets.CONSERVATIVE.limits,
+    swap: {
+      perTransactionUSD: 1000,
+      perDayUSD: 5000,
+      maxSlippagePercent: 1,
+      maxPriceImpactPercent: 5,
+      allowedTokens: ['ETH', 'USDC', 'USDT', 'WETH'],  // Restrict to known tokens
+    },
+  },
 });
 ```

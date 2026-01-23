@@ -52,6 +52,7 @@ await wallet.sendUSDC({ to: 'merchant.eth', amount: '100' });
 | Feature | eth-agent | Raw viem/ethers |
 |---------|-----------|-----------------|
 | Stablecoin transfers | One line | 15+ lines |
+| Token swaps (Uniswap) | One line | 50+ lines |
 | Spending limits | Built-in | Manual |
 | Human approval | Built-in | Manual |
 | ENS resolution | Automatic | Manual |
@@ -102,6 +103,80 @@ const balances = await wallet.getStablecoinBalances();
 
 ```typescript
 import { USDC, USDT, USDS, PYUSD, FRAX, DAI } from '@lambdaclass/eth-agent';
+```
+
+## Token Swaps
+
+Swap any token using Uniswap V3 with built-in slippage protection and spending limits:
+
+```typescript
+import { AgentWallet } from '@lambdaclass/eth-agent';
+
+const wallet = AgentWallet.create({
+  privateKey: process.env.ETH_PRIVATE_KEY,
+  rpcUrl: 'https://eth.llamarpc.com',
+});
+
+// Swap 100 USDC for ETH
+const result = await wallet.swap({
+  fromToken: 'USDC',
+  toToken: 'ETH',
+  amount: '100',
+  slippageTolerance: 0.5,  // 0.5% max slippage
+});
+console.log(result.summary);
+// → "Swapped 100 USDC for 0.042 ETH. TX: 0xabc..."
+
+// Get a quote before swapping
+const quote = await wallet.getSwapQuote({
+  fromToken: 'ETH',
+  toToken: 'USDC',
+  amount: '0.1',
+});
+console.log(`Expected: ${quote.toToken.amount} USDC`);
+console.log(`Minimum after slippage: ${quote.amountOutMinimum} USDC`);
+console.log(`Price impact: ${quote.priceImpact}%`);
+```
+
+### Supported Swap Tokens
+
+| Token | Symbol | Description |
+|-------|--------|-------------|
+| Ether | `ETH` | Native ETH (auto-wrapped to WETH) |
+| Wrapped Ether | `WETH` | Wrapped ETH |
+| Uniswap | `UNI` | Uniswap governance token |
+| Chainlink | `LINK` | Chainlink oracle token |
+| Wrapped Bitcoin | `WBTC` | Bitcoin on Ethereum |
+| Aave | `AAVE` | Aave governance token |
+| + All stablecoins | `USDC`, `USDT`, etc. | See stablecoins section |
+
+You can also swap any ERC20 token by its contract address:
+
+```typescript
+await wallet.swap({
+  fromToken: '0x1f9840a85d5aF5bf1D1762F925BDADdC4201F984',  // UNI address
+  toToken: 'ETH',
+  amount: '50',
+});
+```
+
+### Swap Limits
+
+Configure spending limits for swaps:
+
+```typescript
+const wallet = AgentWallet.create({
+  privateKey: KEY,
+  limits: {
+    swap: {
+      perTransactionUSD: 5000,    // Max $5,000 per swap
+      perDayUSD: 50000,           // Max $50,000 per day
+      maxSlippagePercent: 1,      // Max 1% slippage allowed
+      maxPriceImpactPercent: 5,   // Max 5% price impact
+      allowedTokens: ['ETH', 'USDC', 'USDT', 'WETH'],  // Optional allowlist
+    },
+  },
+});
 ```
 
 ## Safety
@@ -225,8 +300,9 @@ const session = sessionManager.createSession({ maxValue: ETH(0.1), validUntil: .
 eth-agent/
 ├── core/           # Primitives (hex, rlp, abi, units) — zero dependencies
 ├── stablecoins/    # USDC, USDT, USDS, DAI, PYUSD, FRAX definitions
-├── protocol/       # Ethereum (rpc, tx, ens, erc-4337, contracts)
-├── agent/          # Safety (wallet, limits, approval, errors)
+├── tokens/         # General token registry (WETH, UNI, LINK, etc.)
+├── protocol/       # Ethereum (rpc, tx, ens, erc-4337, contracts, uniswap)
+├── agent/          # Safety (wallet, limits, approval, errors, swaps)
 └── integrations/   # AI frameworks (anthropic, openai, langchain, mcp)
 ```
 

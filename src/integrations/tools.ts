@@ -309,6 +309,146 @@ The transaction will be simulated before sending. Spending limits apply.`,
         riskLevel: 'none',
       },
     },
+
+    // === Swap Operations ===
+    {
+      name: 'eth_swap',
+      description: `Swap tokens using Uniswap V3. Supports ETH, WETH, and any ERC20 token by symbol or address.
+
+Example usage:
+- Swap 100 USDC for ETH
+- Swap 0.1 ETH for USDC
+- Swap 50 UNI for WETH
+
+The swap will be quoted before execution to show expected output. Slippage protection and spending limits apply.`,
+      parameters: {
+        type: 'object',
+        properties: {
+          fromToken: {
+            type: 'string',
+            description: 'Token to swap from - symbol (e.g., "USDC", "ETH", "WETH", "UNI") or contract address',
+          },
+          toToken: {
+            type: 'string',
+            description: 'Token to swap to - symbol (e.g., "ETH", "USDC", "WETH") or contract address',
+          },
+          amount: {
+            type: 'string',
+            description: 'Amount to swap in human-readable format (e.g., "100" for 100 USDC, "0.5" for 0.5 ETH)',
+          },
+          slippageTolerance: {
+            type: 'number',
+            description: 'Maximum slippage tolerance as a percentage (e.g., 0.5 for 0.5%). Default is 0.5%',
+          },
+        },
+        required: ['fromToken', 'toToken', 'amount'],
+      },
+      handler: async (params) => {
+        try {
+          const result = await wallet.swap({
+            fromToken: params['fromToken'] as string,
+            toToken: params['toToken'] as string,
+            amount: params['amount'] as string,
+            slippageTolerance: params['slippageTolerance'] as number | undefined,
+          });
+          return {
+            success: result.success,
+            data: result,
+            summary: result.summary,
+          };
+        } catch (err) {
+          return {
+            success: false,
+            error: (err as Error).message,
+            summary: `Failed to swap: ${(err as Error).message}`,
+          };
+        }
+      },
+      metadata: {
+        category: 'write',
+        requiresApproval: true,
+        riskLevel: 'high',
+      },
+    },
+
+    {
+      name: 'eth_getSwapQuote',
+      description: 'Get a quote for a token swap without executing it. Shows expected output, price impact, and fees.',
+      parameters: {
+        type: 'object',
+        properties: {
+          fromToken: {
+            type: 'string',
+            description: 'Token to swap from - symbol (e.g., "USDC", "ETH") or contract address',
+          },
+          toToken: {
+            type: 'string',
+            description: 'Token to swap to - symbol (e.g., "ETH", "USDC") or contract address',
+          },
+          amount: {
+            type: 'string',
+            description: 'Amount to swap in human-readable format (e.g., "100" for 100 USDC)',
+          },
+          slippageTolerance: {
+            type: 'number',
+            description: 'Slippage tolerance as a percentage. Default is 0.5%',
+          },
+        },
+        required: ['fromToken', 'toToken', 'amount'],
+      },
+      handler: async (params) => {
+        try {
+          const result = await wallet.getSwapQuote({
+            fromToken: params['fromToken'] as string,
+            toToken: params['toToken'] as string,
+            amount: params['amount'] as string,
+            slippageTolerance: params['slippageTolerance'] as number | undefined,
+          });
+
+          const summary = `Quote: ${result.fromToken.amount} ${result.fromToken.symbol} → ${result.toToken.amount} ${result.toToken.symbol} (min: ${result.amountOutMinimum}, impact: ${result.priceImpact.toFixed(2)}%)`;
+
+          return {
+            success: true,
+            data: result,
+            summary,
+          };
+        } catch (err) {
+          return {
+            success: false,
+            error: (err as Error).message,
+            summary: `Failed to get quote: ${(err as Error).message}`,
+          };
+        }
+      },
+      metadata: {
+        category: 'read',
+        requiresApproval: false,
+        riskLevel: 'none',
+      },
+    },
+
+    {
+      name: 'eth_getSwapLimits',
+      description: 'Get current swap spending limits and usage.',
+      parameters: {
+        type: 'object',
+        properties: {},
+        required: [],
+      },
+      handler: async () => {
+        const limits = wallet.getSwapLimits();
+        return {
+          success: true,
+          data: limits,
+          summary: `Swap limits - Daily remaining: $${limits.daily.remaining}, Per tx: $${limits.perTransaction.limit}, Max slippage: ${limits.maxSlippagePercent}%`,
+        };
+      },
+      metadata: {
+        category: 'info',
+        requiresApproval: false,
+        riskLevel: 'none',
+      },
+    },
   ];
 }
 
