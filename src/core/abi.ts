@@ -9,11 +9,38 @@ import { keccak256 } from './hash.js';
 import { isAddress, normalizeAddress } from './address.js';
 
 /**
+ * ABI input parameter with optional tuple components
+ */
+export interface ABIInput {
+  type: string;
+  name?: string;
+  components?: ABIInput[];
+}
+
+/**
+ * Convert ABI parameter type to inline format
+ * Handles tuples by converting {type: "tuple", components: [...]} to "(type1,type2,...)"
+ */
+function abiTypeToInline(param: ABIInput): string {
+  if (param.type === 'tuple' && param.components) {
+    const componentTypes = param.components.map(abiTypeToInline);
+    return `(${componentTypes.join(',')})`;
+  }
+  if (param.type.startsWith('tuple[') && param.components) {
+    // Tuple array like "tuple[]" or "tuple[5]"
+    const arraySuffix = param.type.slice(5); // Get "[]" or "[5]"
+    const componentTypes = param.components.map(abiTypeToInline);
+    return `(${componentTypes.join(',')})${arraySuffix}`;
+  }
+  return param.type;
+}
+
+/**
  * Encode function call data
  * Accepts either a string signature or an ABI fragment object
  */
 export function encodeFunctionCall(
-  signature: string | { name: string; inputs?: Array<{ type: string; name?: string }> },
+  signature: string | { name: string; inputs?: ABIInput[] },
   args: unknown[] = []
 ): Hex {
   let selector: Hex;
@@ -23,11 +50,11 @@ export function encodeFunctionCall(
     selector = functionSelector(signature);
     paramTypes = parseSignatureTypes(signature);
   } else {
-    // ABI fragment format
-    const types = (signature.inputs ?? []).map((i) => i.type);
-    const sig = `${signature.name}(${types.join(',')})`;
+    // ABI fragment format - convert tuple types to inline format
+    const inputs = signature.inputs ?? [];
+    paramTypes = inputs.map(abiTypeToInline);
+    const sig = `${signature.name}(${paramTypes.join(',')})`;
     selector = functionSelector(sig);
-    paramTypes = types;
   }
 
   const encoded = encodeParameters(paramTypes, args);
@@ -206,10 +233,11 @@ export function encodeParameters(types: string[], values: unknown[]): Hex {
       tailOffset += hexLength(encoded);
     } else {
       // Static type: head contains value
-      // Fixed arrays of static types are encoded inline (not padded to 32)
+      // Fixed arrays and static tuples are encoded inline (not padded to 32)
       const encoded = encodeParameter(type, value);
       const isFixedArray = /^.+\[\d+\]$/.test(type);
-      if (isFixedArray) {
+      const isStaticTuple = type.startsWith('(') && type.endsWith(')');
+      if (isFixedArray || isStaticTuple) {
         heads.push(encoded);
         // Adjust tail offset for subsequent dynamic types
         tailOffset += hexLength(encoded) - 32;
@@ -232,24 +260,50 @@ export function decodeParameters(types: string[], data: Hex): unknown[] {
   const bytes = hexToBytes(data);
   const results: unknown[] = [];
 
+  // Track current head offset (varies for static tuples and fixed arrays)
+  let currentHeadOffset = 0;
+
   for (let i = 0; i < types.length; i++) {
     const type = types[i];
     if (!type) continue;
 
-    const headOffset = i * 32;
-
     if (isDynamicType(type)) {
       // Read offset from head
-      const offsetBytes = bytes.slice(headOffset, headOffset + 32);
+      const offsetBytes = bytes.slice(currentHeadOffset, currentHeadOffset + 32);
       const offset = Number(bytesToBigint(offsetBytes));
       results.push(decodeParameter(type, bytes, offset));
+      currentHeadOffset += 32;
     } else {
       // Read value directly from head
-      results.push(decodeParameter(type, bytes, headOffset));
+      results.push(decodeParameter(type, bytes, currentHeadOffset));
+      // Calculate size of this static type
+      currentHeadOffset += getStaticTypeSize(type);
     }
   }
 
   return results;
+}
+
+/**
+ * Get the byte size of a static type
+ */
+function getStaticTypeSize(type: string): number {
+  // Static tuple: sum of component sizes
+  if (type.startsWith('(') && type.endsWith(')')) {
+    const componentTypes = parseTupleTypes(type);
+    return componentTypes.reduce((sum, t) => sum + getStaticTypeSize(t), 0);
+  }
+
+  // Fixed array: element size * count
+  const fixedArrayMatch = /^(.+)\[(\d+)\]$/.exec(type);
+  if (fixedArrayMatch) {
+    const baseType = fixedArrayMatch[1]!;
+    const count = parseInt(fixedArrayMatch[2]!);
+    return getStaticTypeSize(baseType) * count;
+  }
+
+  // All other static types are 32 bytes
+  return 32;
 }
 
 /**
@@ -290,9 +344,14 @@ function encodeParameter(type: string, value: unknown): Hex {
     }
   }
 
-  // Handle tuple
-  if (type === 'tuple' || type.startsWith('(')) {
-    throw new Error('Tuple encoding requires component types');
+  // Handle bare "tuple" keyword (requires using ABI fragment with components)
+  if (type === 'tuple' || type.startsWith('tuple[')) {
+    throw new Error('Tuple encoding requires component types - use inline format like "(address,uint256)" or ABI fragment with components');
+  }
+
+  // Handle tuple types like "(address,uint256,bool)"
+  if (type.startsWith('(') && type.endsWith(')')) {
+    return encodeTuple(type, value);
   }
 
   // Handle basic types
@@ -391,12 +450,13 @@ function decodeParameter(type: string, data: Uint8Array, offset: number): unknow
       offset += 32;
 
       const elements: unknown[] = [];
+      const elementSize = isDynamicType(baseType) ? 32 : getStaticTypeSize(baseType);
       for (let i = 0; i < length; i++) {
         if (isDynamicType(baseType)) {
           const elemOffset = Number(bytesToBigint(data.slice(offset + i * 32, offset + i * 32 + 32)));
           elements.push(decodeParameter(baseType, data, offset + elemOffset));
         } else {
-          elements.push(decodeParameter(baseType, data, offset + i * 32));
+          elements.push(decodeParameter(baseType, data, offset + i * elementSize));
         }
       }
       return elements;
@@ -404,16 +464,22 @@ function decodeParameter(type: string, data: Uint8Array, offset: number): unknow
       // Fixed array
       const length = parseInt(size);
       const elements: unknown[] = [];
+      const elementSize = isDynamicType(baseType) ? 32 : getStaticTypeSize(baseType);
       for (let i = 0; i < length; i++) {
         if (isDynamicType(baseType)) {
           const elemOffset = Number(bytesToBigint(data.slice(offset + i * 32, offset + i * 32 + 32)));
           elements.push(decodeParameter(baseType, data, offset + elemOffset));
         } else {
-          elements.push(decodeParameter(baseType, data, offset + i * 32));
+          elements.push(decodeParameter(baseType, data, offset + i * elementSize));
         }
       }
       return elements;
     }
+  }
+
+  // Handle tuple types
+  if (type.startsWith('(') && type.endsWith(')')) {
+    return decodeTuple(type, data, offset);
   }
 
   // Handle basic types
@@ -484,6 +550,78 @@ function encodeBytes(bytes: Uint8Array): Hex {
 }
 
 /**
+ * Encode a tuple value
+ * Tuples are encoded the same as multiple parameters
+ */
+function encodeTuple(type: string, value: unknown): Hex {
+  const componentTypes = parseTupleTypes(type);
+
+  // Value can be an array or an object with numeric/named keys
+  let values: unknown[];
+  if (Array.isArray(value)) {
+    values = value;
+  } else if (typeof value === 'object' && value !== null) {
+    // Object form - extract values in order
+    values = componentTypes.map((_, i) => {
+      const obj = value as Record<string | number, unknown>;
+      // Try numeric index first, then check if there are named keys
+      if (i in obj) return obj[i];
+      // For named keys, we'd need component names from ABI, so just use index
+      return obj[i];
+    });
+  } else {
+    throw new Error(`Expected array or object for tuple type, got ${typeof value}`);
+  }
+
+  if (values.length !== componentTypes.length) {
+    throw new Error(`Tuple size mismatch: expected ${componentTypes.length}, got ${values.length}`);
+  }
+
+  // Use encodeParameters for the tuple components
+  return encodeParameters(componentTypes, values);
+}
+
+/**
+ * Decode a tuple value
+ */
+function decodeTuple(type: string, data: Uint8Array, offset: number): unknown[] {
+  const componentTypes = parseTupleTypes(type);
+  const results: unknown[] = [];
+
+  // For dynamic tuples, components use head/tail encoding relative to tuple start
+  // For static tuples, components are packed sequentially
+  const isDynamic = isDynamicType(type);
+
+  if (isDynamic) {
+    // Dynamic tuple - each component has a head (offset for dynamic, value for static)
+    let headOffset = offset;
+    for (let i = 0; i < componentTypes.length; i++) {
+      const compType = componentTypes[i];
+      if (!compType) continue;
+
+      if (isDynamicType(compType)) {
+        // Read offset from head, relative to tuple start
+        const relativeOffset = Number(bytesToBigint(data.slice(headOffset, headOffset + 32)));
+        results.push(decodeParameter(compType, data, offset + relativeOffset));
+      } else {
+        results.push(decodeParameter(compType, data, headOffset));
+      }
+      headOffset += 32;
+    }
+  } else {
+    // Static tuple - components are packed sequentially
+    let currentOffset = offset;
+    for (const compType of componentTypes) {
+      if (!compType) continue;
+      results.push(decodeParameter(compType, data, currentOffset));
+      currentOffset += getStaticTypeSize(compType);
+    }
+  }
+
+  return results;
+}
+
+/**
  * Check if a type is dynamic (variable length)
  */
 function isDynamicType(type: string): boolean {
@@ -494,7 +632,50 @@ function isDynamicType(type: string): boolean {
   if (arrayMatch?.[1]) {
     return isDynamicType(arrayMatch[1]);
   }
+  // Tuple types - check if any component is dynamic
+  if (type.startsWith('(') && type.endsWith(')')) {
+    const componentTypes = parseTupleTypes(type);
+    return componentTypes.some(isDynamicType);
+  }
   return false;
+}
+
+/**
+ * Parse tuple type string into component types
+ * e.g., "(address,uint256,bool)" -> ["address", "uint256", "bool"]
+ * Handles nested tuples: "((address,uint256),bool)" -> ["(address,uint256)", "bool"]
+ */
+function parseTupleTypes(tupleType: string): string[] {
+  // Remove outer parentheses
+  const inner = tupleType.slice(1, -1);
+  if (!inner) return [];
+
+  const types: string[] = [];
+  let current = '';
+  let depth = 0;
+
+  for (const char of inner) {
+    if (char === '(') {
+      depth++;
+      current += char;
+    } else if (char === ')') {
+      depth--;
+      current += char;
+    } else if (char === ',' && depth === 0) {
+      if (current.trim()) {
+        types.push(current.trim());
+      }
+      current = '';
+    } else {
+      current += char;
+    }
+  }
+
+  if (current.trim()) {
+    types.push(current.trim());
+  }
+
+  return types;
 }
 
 /**
