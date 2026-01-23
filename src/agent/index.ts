@@ -20,6 +20,9 @@ export type {
   SwapResult,
   BridgeUSDCOptions,
   BridgeUSDCResult,
+  // New bridge types
+  BridgeOptions,
+  BridgeResult,
 } from './wallet.js';
 
 // Limits engine
