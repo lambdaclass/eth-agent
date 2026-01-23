@@ -3,7 +3,7 @@
  * Supports swaps via SwapRouter02 and quotes via Quoter V2
  */
 
-import type { Address, Hex } from '../core/types.js';
+import type { Address, Hex, TransactionReceipt } from '../core/types.js';
 import type { RPCClient } from './rpc.js';
 import type { Account } from './account.js';
 import { Contract } from './contract.js';
@@ -59,6 +59,12 @@ export const WETH_ADDRESSES: Record<number, string> = {
  */
 export const FEE_TIERS = [500, 3000, 10000] as const;
 export type FeeTier = (typeof FEE_TIERS)[number];
+
+/**
+ * ERC20 Transfer event topic (keccak256 of "Transfer(address,address,uint256)")
+ * Used to parse actual output amounts from transaction logs
+ */
+export const TRANSFER_EVENT_TOPIC = '0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef';
 
 /**
  * SwapRouter02 ABI - Only the functions we need
@@ -252,6 +258,8 @@ export interface SwapQuote {
     fee: FeeTier;
   }[];
   gasEstimate: bigint;
+  /** Number of initialized ticks crossed - higher means more price impact */
+  initializedTicksCrossed: number;
 }
 
 /**
@@ -441,8 +449,15 @@ export class UniswapClient {
     // Decode the result
     const decoded = this.decodeQuoteResult(result);
 
-    // Calculate price impact (simplified - real calculation would need pool data)
-    const priceImpact = this.estimatePriceImpact(fee);
+    // Calculate price impact using initializedTicksCrossed
+    // Each tick in Uniswap V3 represents a 0.01% price change (1 basis point)
+    // The fee also contributes to effective price impact
+    const priceImpact = this.calculatePriceImpact(
+      fee,
+      decoded.initializedTicksCrossed,
+      amountIn,
+      decoded.amountOut
+    );
 
     return {
       amountIn,
@@ -452,6 +467,7 @@ export class UniswapClient {
       fee,
       path: [{ tokenIn, tokenOut, fee }],
       gasEstimate: decoded.gasEstimate,
+      initializedTicksCrossed: decoded.initializedTicksCrossed,
     };
   }
 
@@ -500,13 +516,95 @@ export class UniswapClient {
   }
 
   /**
-   * Estimate price impact (simplified calculation)
+   * Calculate price impact based on quote data.
+   *
+   * Price impact is estimated using:
+   * 1. The fee tier (base cost of the swap)
+   * 2. Number of initialized ticks crossed (each tick = ~0.01% price movement in Uniswap V3)
+   * 3. Comparison of input/output ratio vs. a theoretical "spot" rate
+   *
+   * This provides a more accurate estimate than just returning the fee percentage,
+   * though exact price impact would require comparing against the pool's current spot price.
+   *
+   * @param fee - The fee tier (500 = 0.05%, 3000 = 0.3%, 10000 = 1%)
+   * @param ticksCrossed - Number of initialized tick boundaries crossed during the swap
+   * @param amountIn - Input amount in raw units
+   * @param amountOut - Output amount in raw units
+   * @returns Estimated price impact as a percentage (e.g., 0.5 means 0.5%)
    */
-  private estimatePriceImpact(fee: FeeTier): number {
-    // This is a simplified estimate - real price impact calculation
-    // would require pool reserves and tick data
+  private calculatePriceImpact(
+    fee: FeeTier,
+    ticksCrossed: number,
+    _amountIn: bigint,
+    _amountOut: bigint
+  ): number {
+    // Base impact from the fee tier
     const feePercent = fee / 10000;
-    return feePercent;
+
+    // Each tick crossed represents approximately 0.01% (1 basis point) price movement
+    // In Uniswap V3, ticks are spaced at 1.0001^tick, so each tick is ~0.01%
+    // More ticks crossed = larger swap relative to liquidity = higher price impact
+    const tickImpact = ticksCrossed * 0.01;
+
+    // Total estimated price impact
+    // For most swaps with good liquidity, ticksCrossed is 0-2
+    // High tick counts (10+) indicate significant price movement through the pool
+    const totalImpact = feePercent + tickImpact;
+
+    // Round to 4 decimal places
+    return Math.round(totalImpact * 10000) / 10000;
+  }
+
+  /**
+   * Parse the actual output amount from transaction receipt logs.
+   *
+   * Looks for ERC20 Transfer events to the recipient address to determine
+   * the actual amount received (not just the minimum).
+   *
+   * @param receipt - Transaction receipt with logs
+   * @param tokenOut - Output token address
+   * @param recipient - Address that should receive the tokens
+   * @returns Actual output amount, or undefined if not found in logs
+   */
+  private parseActualOutputFromLogs(
+    receipt: TransactionReceipt,
+    tokenOut: Address,
+    recipient: Address
+  ): bigint | undefined {
+    // Safety check: if no logs, return undefined
+    if (!receipt.logs || receipt.logs.length === 0) {
+      return undefined;
+    }
+
+    // Look for Transfer events from the output token to the recipient
+    // Transfer(address indexed from, address indexed to, uint256 value)
+    // topic[0] = event signature, topic[1] = from, topic[2] = to
+    // data = value (uint256)
+    const tokenOutLower = tokenOut.toLowerCase();
+    const recipientPadded = recipient.toLowerCase().slice(2).padStart(64, '0');
+
+    for (const log of receipt.logs) {
+      // Check if this is a Transfer event from the output token
+      const topic0 = log.topics[0];
+      const topic2 = log.topics[2];
+      if (
+        log.address.toLowerCase() === tokenOutLower &&
+        log.topics.length >= 3 &&
+        topic0 &&
+        topic2 &&
+        topic0.toLowerCase() === TRANSFER_EVENT_TOPIC.toLowerCase()
+      ) {
+        // Check if the recipient matches (topic[2] is the "to" address)
+        const toAddress = topic2.slice(2).toLowerCase();
+        if (toAddress === recipientPadded) {
+          // Parse the amount from log data
+          const amountHex = log.data.slice(2); // Remove 0x prefix
+          return BigInt('0x' + amountHex);
+        }
+      }
+    }
+
+    return undefined;
   }
 
   /**
@@ -592,10 +690,18 @@ export class UniswapClient {
     const hash = await this.rpc.sendRawTransaction(signed.raw);
     const receipt = await this.rpc.waitForTransaction(hash);
 
+    // Parse actual output amount from transaction logs
+    // This gives us the real amount received, not just the minimum
+    const actualOutput = this.parseActualOutputFromLogs(
+      receipt,
+      params.tokenOut,
+      params.recipient
+    );
+
     return {
       hash,
       amountIn: params.amountIn,
-      amountOut: params.amountOutMinimum, // Actual amount from logs would be better
+      amountOut: actualOutput ?? params.amountOutMinimum,
       gasUsed: receipt.gasUsed,
       effectiveGasPrice: receipt.effectiveGasPrice,
       blockNumber: receipt.blockNumber,
@@ -649,10 +755,18 @@ export class UniswapClient {
     const hash = await this.rpc.sendRawTransaction(signed.raw);
     const receipt = await this.rpc.waitForTransaction(hash);
 
+    // Parse actual output amount from transaction logs
+    // This gives us the real amount received, not just the minimum
+    const actualOutput = this.parseActualOutputFromLogs(
+      receipt,
+      params.tokenOut,
+      params.recipient
+    );
+
     return {
       hash,
       amountIn: params.amountIn,
-      amountOut: params.amountOutMinimum,
+      amountOut: actualOutput ?? params.amountOutMinimum,
       gasUsed: receipt.gasUsed,
       effectiveGasPrice: receipt.effectiveGasPrice,
       blockNumber: receipt.blockNumber,

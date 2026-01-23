@@ -147,6 +147,7 @@ describe('Uniswap Protocol', () => {
           gasUsed: 150000n,
           effectiveGasPrice: GWEI(20),
           blockNumber: 12345,
+          logs: [],
         }),
       };
 
@@ -400,6 +401,74 @@ describe('Uniswap Protocol', () => {
         expect(result.blockNumber).toBe(12345);
         expect(mockRpc.sendRawTransaction).toHaveBeenCalled();
         expect(mockRpc.waitForTransaction).toHaveBeenCalledWith(testHash);
+      });
+
+      it('parses actual output amount from Transfer logs', async () => {
+        // Mock receipt with Transfer event log
+        const actualOutputAmount = 950000n; // More than minimum
+        const TRANSFER_TOPIC = '0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef';
+
+        mockRpc.waitForTransaction.mockResolvedValueOnce({
+          status: 'success',
+          hash: testHash,
+          gasUsed: 150000n,
+          effectiveGasPrice: GWEI(20),
+          blockNumber: 12345,
+          logs: [
+            {
+              address: tokenOut, // Output token
+              topics: [
+                TRANSFER_TOPIC as any,
+                '0x0000000000000000000000001234567890123456789012345678901234567890', // from (pool)
+                '0x0000000000000000000000001234567890123456789012345678901234567890', // to (recipient)
+              ],
+              data: '0x' + actualOutputAmount.toString(16).padStart(64, '0'), // 950000 in hex
+              blockNumber: 12345,
+              transactionHash: testHash,
+              transactionIndex: 0,
+              blockHash: testHash,
+              logIndex: 0,
+              removed: false,
+            },
+          ],
+        });
+
+        const result = await client.executeSwap({
+          tokenIn,
+          tokenOut,
+          amountIn: 1000000n,
+          amountOutMinimum: 900000n,
+          recipient: mockAccount.address,
+          deadline: getDefaultDeadline(),
+          fee: 3000,
+        });
+
+        // Should use actual output from logs, not the minimum
+        expect(result.amountOut).toBe(actualOutputAmount);
+      });
+
+      it('falls back to amountOutMinimum when logs are empty', async () => {
+        mockRpc.waitForTransaction.mockResolvedValueOnce({
+          status: 'success',
+          hash: testHash,
+          gasUsed: 150000n,
+          effectiveGasPrice: GWEI(20),
+          blockNumber: 12345,
+          logs: [],
+        });
+
+        const result = await client.executeSwap({
+          tokenIn,
+          tokenOut,
+          amountIn: 1000000n,
+          amountOutMinimum: 900000n,
+          recipient: mockAccount.address,
+          deadline: getDefaultDeadline(),
+          fee: 3000,
+        });
+
+        // Should fall back to amountOutMinimum
+        expect(result.amountOut).toBe(900000n);
       });
     });
 

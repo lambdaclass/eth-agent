@@ -43,6 +43,8 @@ import {
   parseTokenAmount,
   formatTokenAmount,
   isNativeETH,
+  getTokenBySymbol,
+  getTokenAddress,
 } from '../tokens/index.js';
 import {
   UniswapClient,
@@ -248,6 +250,10 @@ export class AgentWallet {
   private readonly blockedAddresses: Map<string, string>;
   private readonly agentId: string;
   private uniswapClient: UniswapClient | null = null;
+
+  // ETH price cache for USD value estimation
+  private cachedETHPrice: { value: bigint; timestamp: number } | null = null;
+  private readonly ETH_PRICE_CACHE_TTL = 5 * 60 * 1000; // 5 minutes
 
   private constructor(config: Required<{
     account: Account;
@@ -1319,10 +1325,8 @@ export class AgentWallet {
       });
     }
 
-    // 7. Estimate USD value for swap limits
-    // For simplicity, we use a rough estimate - in production you'd use a price oracle
-    // We'll use 6 decimals for USD (like USDC)
-    const usdValue = this.estimateSwapUSDValue(amountIn, fromResolved.token, chainId);
+    // 7. Estimate USD value for swap limits (uses Uniswap quote for ETH price)
+    const usdValue = await this.estimateSwapUSDValue(amountIn, fromResolved.token, chainId);
 
     // 8. Check swap spending limits with proper USD value
     this.limits.checkSwapTransaction(
@@ -1558,10 +1562,70 @@ export class AgentWallet {
   }
 
   /**
-   * Estimate USD value of a swap (simplified - uses token decimals as proxy)
-   * In production, you would integrate a price oracle
+   * Get current ETH price in USD using Uniswap quote (cached for 5 minutes)
+   *
+   * @throws {EthAgentError} If ETH price cannot be fetched (no USDC/WETH on chain, or quote fails)
    */
-  private estimateSwapUSDValue(amount: bigint, token: TokenInfo, _chainId: number): bigint {
+  private async getETHPriceInUSD(chainId: number): Promise<bigint> {
+    // Return cached price if fresh
+    if (
+      this.cachedETHPrice &&
+      Date.now() - this.cachedETHPrice.timestamp < this.ETH_PRICE_CACHE_TTL
+    ) {
+      return this.cachedETHPrice.value;
+    }
+
+    // Get USDC address for this chain
+    const usdcToken = getTokenBySymbol('USDC');
+    const usdcAddress = usdcToken ? getTokenAddress(usdcToken, chainId) : undefined;
+    const wethAddress = WETH_ADDRESSES[chainId];
+
+    // Fail explicitly if USDC or WETH not available on this chain
+    if (!usdcAddress || !wethAddress) {
+      throw new EthAgentError({
+        code: 'ETH_PRICE_UNAVAILABLE',
+        message: `Cannot fetch ETH price on chain ${chainId}: USDC or WETH not available`,
+        details: { chainId, hasUSDC: !!usdcAddress, hasWETH: !!wethAddress },
+        suggestion: 'Use a chain with USDC liquidity (Mainnet, Arbitrum, Optimism, Base, Polygon) or swap stablecoins directly',
+      });
+    }
+
+    // Fetch current price using existing Uniswap infrastructure
+    const uniswap = await this.getUniswapClient();
+
+    try {
+      const quote = await uniswap.getQuote({
+        tokenIn: wethAddress as Address,
+        tokenOut: usdcAddress as Address,
+        amountIn: 10n ** 18n, // 1 ETH
+        slippageTolerance: 1,
+      });
+
+      // Cache the result (amountOut is in USDC which has 6 decimals)
+      this.cachedETHPrice = { value: quote.amountOut, timestamp: Date.now() };
+      return quote.amountOut;
+    } catch (error) {
+      // Fail explicitly if quote fails - don't use arbitrary fallback
+      throw new EthAgentError({
+        code: 'ETH_PRICE_QUOTE_FAILED',
+        message: `Failed to fetch ETH price from Uniswap on chain ${chainId}`,
+        details: { chainId, error: (error as Error).message },
+        suggestion: 'The ETH/USDC pool may have insufficient liquidity. Try again later or use a different chain',
+        retryable: true,
+        retryAfter: 30000, // 30 seconds
+      });
+    }
+  }
+
+  /**
+   * Estimate USD value of a swap amount
+   * Uses Uniswap quotes for ETH/WETH pricing, cached for efficiency
+   */
+  private async estimateSwapUSDValue(
+    amount: bigint,
+    token: TokenInfo,
+    chainId: number
+  ): Promise<bigint> {
     // For stablecoins, the value is approximately 1:1 with USD
     const stablecoins = ['USDC', 'USDT', 'USDS', 'DAI', 'PYUSD', 'FRAX'];
     if (stablecoins.includes(token.symbol.toUpperCase())) {
@@ -1575,15 +1639,14 @@ export class AgentWallet {
       }
     }
 
-    // For ETH/WETH, use a rough estimate (this should use a price oracle in production)
+    // For ETH/WETH, get real-time price from Uniswap
     if (token.symbol === 'ETH' || token.symbol === 'WETH') {
-      // Assume ~$2000 per ETH (normalized to 6 decimals)
-      // amount is in 18 decimals, so amount / 10^18 * 2000 * 10^6
-      return (amount * 2000n * 10n ** 6n) / 10n ** 18n;
+      const ethPriceUSD = await this.getETHPriceInUSD(chainId);
+      // ethPriceUSD is in 6 decimals, amount is in 18 decimals
+      return (amount * ethPriceUSD) / 10n ** 18n;
     }
 
     // For other tokens, use a conservative estimate based on amount
-    // This is a fallback - in production, integrate a price oracle
     // Normalize to 6 decimals and assume $1 = 1 token unit
     if (token.decimals === 6) {
       return amount;
