@@ -80,9 +80,27 @@ export class EOA implements Account {
   }
 
   /**
-   * Export the private key (use with caution)
+   * Export the private key
+   *
+   * **SECURITY WARNING:** This method exposes the raw private key.
+   * The private key provides complete control over this account's funds.
+   *
+   * - NEVER log, print, or display the private key
+   * - NEVER send the private key over the network
+   * - NEVER store the private key in plaintext
+   * - Clear the returned value from memory as soon as possible
+   *
+   * Consider using signMessage() or sign() instead if you only need
+   * to create signatures without exposing the key material.
+   *
+   * @returns The raw private key as a hex string
    */
   exportPrivateKey(): Hex {
+    console.warn(
+      '[eth-agent] WARNING: exportPrivateKey() called. ' +
+      'The private key provides complete control over account funds. ' +
+      'Handle with extreme caution and never expose it.'
+    );
     return this.privateKey;
   }
 }
@@ -163,7 +181,7 @@ function deriveChildKey(
     if (!component) continue;
 
     const hardened = component.endsWith("'");
-    const index = parseInt(hardened ? component.slice(0, -1) : component);
+    const index = parseInt(hardened ? component.slice(0, -1) : component, 10);
 
     if (isNaN(index)) {
       throw new Error(`Invalid path component: ${component}`);

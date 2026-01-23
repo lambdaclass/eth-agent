@@ -476,6 +476,26 @@ export class SlippageExceededError extends SwapError {
   }
 }
 
+export class SlippageOutOfBoundsError extends SwapError {
+  static readonly MIN_SLIPPAGE = 0.01;  // 0.01%
+  static readonly MAX_SLIPPAGE = 50;     // 50%
+
+  constructor(config: {
+    slippage: number;
+    min: number;
+    max: number;
+  }) {
+    super({
+      code: 'SLIPPAGE_OUT_OF_BOUNDS',
+      message: `Slippage tolerance ${config.slippage}% is out of bounds. Must be between ${config.min}% and ${config.max}%`,
+      details: config,
+      suggestion: `Set slippage tolerance between ${config.min}% and ${config.max}%. Common values: 0.5% for stablecoins, 1% for most tokens, up to 5% for volatile tokens`,
+      retryable: false,
+    });
+    this.name = 'SlippageOutOfBoundsError';
+  }
+}
+
 export class TokenNotSupportedError extends SwapError {
   constructor(config: {
     token: string;
