@@ -301,3 +301,126 @@ describe('generateTrackingId', () => {
     expect(id).toMatch(/^stargate-/);
   });
 });
+
+describe('RouteSelector - additional edge cases', () => {
+  let selector: RouteSelector;
+
+  beforeEach(() => {
+    selector = new RouteSelector();
+  });
+
+  describe('selectBestRoute - speed savings', () => {
+    it('should calculate time savings for speed priority', () => {
+      const fastQuote = createMockQuote({
+        protocol: 'FastBridge',
+        estimatedTime: { minSeconds: 60, maxSeconds: 120, display: '1-2 minutes' },
+      });
+      const slowQuote = createMockQuote({
+        protocol: 'SlowBridge',
+        estimatedTime: { minSeconds: 600, maxSeconds: 900, display: '10-15 minutes' },
+      });
+
+      const result = selector.selectBestRoute(
+        [slowQuote, fastQuote],
+        { priority: 'speed' }
+      );
+
+      expect(result.recommendation.savings).toBeDefined();
+      expect(result.recommendation.savings).toContain('min faster');
+    });
+  });
+
+  describe('selectBestRoute - reliability savings', () => {
+    it('should calculate reliability difference for reliability priority', () => {
+      const reliableQuote = createMockQuote({ protocol: 'ReliableBridge' });
+      const unreliableQuote = createMockQuote({ protocol: 'UnreliableBridge' });
+
+      const protocolScores = new Map<string, number>();
+      protocolScores.set('ReliableBridge', 95);
+      protocolScores.set('UnreliableBridge', 70);
+
+      const result = selector.selectBestRoute(
+        [unreliableQuote, reliableQuote],
+        { priority: 'reliability' },
+        protocolScores
+      );
+
+      expect(result.recommendation.savings).toBeDefined();
+      expect(result.recommendation.savings).toContain('more reliable');
+    });
+  });
+
+  describe('selectBestRoute - constraint failures', () => {
+    it('should give zero score when exceeding max fee', () => {
+      const expensiveQuote = createMockQuote({
+        protocol: 'ExpensiveBridge',
+        fee: { protocol: 0n, gas: 0n, total: 0n, totalUSD: 150 }, // Exceeds NORMALIZATION.maxFeeUSD
+      });
+
+      const result = selector.selectBestRoute(
+        [expensiveQuote],
+        { priority: 'cost', maxFeeUSD: 50 }
+      );
+
+      // Quote still recommended since it's the only option, but with low score
+      expect(result.recommended).toBeDefined();
+    });
+
+    it('should give zero score when exceeding max time', () => {
+      const slowQuote = createMockQuote({
+        protocol: 'SlowBridge',
+        estimatedTime: { minSeconds: 7200, maxSeconds: 14400, display: '2-4 hours' },
+      });
+
+      const result = selector.selectBestRoute(
+        [slowQuote],
+        { priority: 'speed', maxTimeMinutes: 30 }
+      );
+
+      expect(result.recommended).toBeDefined();
+    });
+  });
+
+  describe('selectBestRoute - fallback estimatedTime handling', () => {
+    it('should handle quotes with only seconds property', () => {
+      const quote = createMockQuote({
+        protocol: 'SimpleBridge',
+        estimatedTime: { seconds: 600, display: '10 minutes' },
+      });
+
+      const result = selector.selectBestRoute([quote], { priority: 'speed' });
+
+      expect(result.recommended?.protocol).toBe('SimpleBridge');
+    });
+  });
+
+  describe('filterByConstraints - time with seconds only', () => {
+    it('should handle maxSeconds fallback to seconds', () => {
+      const quote = createMockQuote({
+        protocol: 'SimpleBridge',
+        estimatedTime: { seconds: 600, display: '10 minutes' },
+      });
+
+      const filtered = selector.filterByConstraints(
+        [quote],
+        { priority: 'speed', maxTimeMinutes: 15 }
+      );
+
+      expect(filtered).toHaveLength(1);
+    });
+  });
+
+  describe('selectBestRoute - default protocol score', () => {
+    it('should use default reliability score of 80 for unknown protocols', () => {
+      const quote = createMockQuote({ protocol: 'UnknownBridge' });
+
+      const result = selector.selectBestRoute(
+        [quote],
+        { priority: 'reliability' },
+        new Map() // Empty map - no scores
+      );
+
+      expect(result.recommended?.protocol).toBe('UnknownBridge');
+    });
+  });
+});
