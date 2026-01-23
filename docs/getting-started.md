@@ -135,6 +135,45 @@ if (result.ok) {
 }
 ```
 
+## Bridge USDC Across Chains
+
+Bridge USDC to other chains using Circle's CCTP (Cross-Chain Transfer Protocol):
+
+```typescript
+// Preview the bridge first
+const preview = await wallet.previewBridgeUSDC({
+  amount: '100',
+  destinationChainId: 8453,  // Base
+});
+
+if (!preview.canBridge) {
+  console.log('Cannot bridge:', preview.blockers);
+  return;
+}
+
+console.log(`Will bridge ${preview.amount.formatted} USDC`);
+console.log(`Estimated time: ${preview.estimatedTime}`);
+
+// Execute the bridge (burns USDC on source chain)
+const result = await wallet.bridgeUSDC({
+  amount: '100',
+  destinationChainId: 8453,
+});
+
+console.log(`Burn TX: ${result.burnTxHash}`);
+console.log(`Message hash: ${result.messageHash}`);
+
+// Check status anytime
+const status = await wallet.getBridgeStatus(result.messageHash);
+console.log(`Status: ${status.status}`);
+
+// Wait for Circle attestation (10-30 min on mainnet)
+const attestation = await wallet.waitForBridgeAttestation(result.messageHash);
+console.log('Attestation received, bridge completing...');
+```
+
+Supported chains: Ethereum, Arbitrum, Optimism, Base, Polygon, Avalanche (and their testnets).
+
 ## Transfer ERC-20 Tokens
 
 For tokens not built-in, use the generic ERC-20 API:
@@ -201,7 +240,7 @@ const message = matchResult(result)
 
 ## Next Steps
 
-- [Safety Guide](./safety.md) — Configure spending limits and approval flows
+- [Safety Guide](./safety.md) — Configure spending limits, bridge limits, and approval flows
 - [Smart Accounts](./smart-accounts.md) — Use ERC-4337 account abstraction
 - [AI Integration](./ai-integration.md) — Connect to OpenAI, Anthropic, LangChain
-- [API Reference](./api-reference.md) — Complete API documentation
+- [API Reference](./api-reference.md) — Complete API documentation including bridging

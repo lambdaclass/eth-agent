@@ -99,6 +99,41 @@ const balances = await wallet.getStablecoinBalances();
 import { ETH, USDC, USDT, USDS, PYUSD, FRAX, DAI } from '@lambdaclass/eth-agent';
 ```
 
+## Bridging
+
+Bridge USDC across chains using Circle's CCTP (Cross-Chain Transfer Protocol):
+
+```typescript
+// Bridge 100 USDC from Ethereum to Base
+const result = await wallet.bridgeUSDC({
+  amount: '100',
+  destinationChainId: 8453,  // Base
+});
+
+console.log(result.burnTxHash);    // TX on source chain
+console.log(result.messageHash);   // Track with this hash
+
+// Wait for Circle attestation (10-30 min on mainnet)
+const attestation = await wallet.waitForBridgeAttestation(result.messageHash);
+
+// Check status anytime
+const status = await wallet.getBridgeStatus(result.messageHash);
+console.log(status.status);  // 'pending_burn' | 'attestation_pending' | 'completed' | ...
+```
+
+### Supported Chains
+
+| Chain | Chain ID | Testnet |
+|-------|----------|---------|
+| Ethereum | 1 | Sepolia (11155111) |
+| Arbitrum | 42161 | Arb Sepolia (421614) |
+| Optimism | 10 | OP Sepolia (11155420) |
+| Base | 8453 | Base Sepolia (84532) |
+| Polygon | 137 | Amoy (80002) |
+| Avalanche | 43114 | Fuji (43113) |
+
+**Note:** Only USDC is supported for bridging. Transfers are 1:1 with no protocol fees (only gas costs).
+
 ## Safety
 
 Spending limits prevent your agent from draining a wallet:
