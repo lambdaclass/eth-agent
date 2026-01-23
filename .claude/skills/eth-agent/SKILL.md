@@ -228,6 +228,137 @@ const payment = await wallet.waitForPayment({
 });
 ```
 
+## Cross-Chain Bridging
+
+Bridge stablecoins between chains using the unified BridgeRouter:
+
+```typescript
+import { USDC } from '@lambdaclass/eth-agent';
+
+// Simple one-liner - auto-selects best bridge
+const result = await wallet.bridge({
+  token: USDC,
+  amount: '100',
+  destinationChainId: 42161,  // Arbitrum
+});
+
+console.log(result.trackingId);  // Use for status tracking
+console.log(result.summary);     // Human-readable summary
+```
+
+### Route Preferences
+
+Control how the router selects bridges:
+
+```typescript
+// Prefer speed over cost
+const fast = await wallet.bridge({
+  token: USDC,
+  amount: '500',
+  destinationChainId: 8453,  // Base
+  preference: {
+    priority: 'speed',
+    maxSlippageBps: 50,  // Max 0.5% slippage
+  },
+});
+
+// Force specific protocol (bypasses auto-selection)
+const viaCCTP = await wallet.bridge({
+  token: USDC,
+  amount: '1000',
+  destinationChainId: 10,  // Optimism
+  protocol: 'CCTP',
+});
+```
+
+### Compare Routes Before Bridging
+
+```typescript
+const routes = await wallet.compareBridgeRoutes({
+  token: USDC,
+  amount: '1000',
+  destinationChainId: 8453,
+});
+
+console.log(routes.recommendation.reason);  // "CCTP: lowest fees ($0)"
+for (const quote of routes.quotes) {
+  console.log(`${quote.protocol}: ${quote.fee.totalUSD} USD fee`);
+}
+```
+
+### Preview Bridge with Validation
+
+```typescript
+const preview = await wallet.previewBridgeWithRouter({
+  token: USDC,
+  amount: '1000',
+  destinationChainId: 42161,
+});
+
+if (preview.canBridge) {
+  console.log(`Ready to bridge. Fee: $${preview.quote?.fee.totalUSD}`);
+  console.log(`Needs approval: ${preview.needsApproval}`);
+} else {
+  console.log('Cannot bridge:', preview.blockers.join(', '));
+}
+```
+
+### Track Bridge Status
+
+```typescript
+// After initiating a bridge
+const result = await wallet.bridge({ ... });
+
+// Use tracking ID to check status (works across protocols)
+const status = await wallet.getBridgeStatusByTrackingId(result.trackingId);
+console.log(`Progress: ${status.progress}%`);
+console.log(`Message: ${status.message}`);
+
+// Wait for completion
+const attestation = await wallet.waitForBridgeByTrackingId(result.trackingId);
+console.log('Bridge completed!');
+```
+
+### Safe Bridge (Result Type)
+
+```typescript
+const result = await wallet.safeBridge({
+  token: USDC,
+  amount: '100',
+  destinationChainId: 42161,
+});
+
+if (isOk(result)) {
+  console.log(`Success! Tracking: ${result.value.trackingId}`);
+} else {
+  console.log(`Error: ${result.error.code}`);
+  console.log(`Suggestion: ${result.error.suggestion}`);
+}
+```
+
+### Supported Bridge Protocols
+
+| Protocol | Tokens | Speed | Fees | Notes |
+|----------|--------|-------|------|-------|
+| CCTP (Circle) | USDC | 10-20 min | $0 | No slippage, 1:1 burn/mint |
+| Stargate | USDC, USDT | 5-15 min | ~0.06% | Has slippage |
+| Across | USDC, USDT | 2-5 min | Variable | Instant delivery |
+
+### Legacy USDC-Only Method
+
+For direct CCTP bridging without route selection:
+
+```typescript
+// Direct CCTP bridge (backward compatible)
+const result = await wallet.bridgeUSDC({
+  amount: '100',
+  destinationChainId: 42161,
+});
+
+// Check status
+const status = await wallet.getBridgeStatus(result.messageHash);
+```
+
 ## AI Framework Integration
 
 ### Anthropic (Claude)
@@ -295,6 +426,9 @@ import { anthropicTools, openaiTools, langchainTools } from '@lambdaclass/eth-ag
 
 // Smart accounts
 import { createRemotePaymaster, createVerifyingPaymaster } from '@lambdaclass/eth-agent';
+
+// Bridging (use wallet.bridge() for simple cases, BridgeRouter for advanced)
+import { BridgeRouter, type RoutePreference } from '@lambdaclass/eth-agent';
 ```
 
 ## Common Patterns
@@ -342,6 +476,45 @@ await smartWallet.sendStablecoinBatch({
   token: USDC,
   transfers: recipients.map(r => ({ to: r.address, amount: r.amount })),
 });
+```
+
+### 4. Cross-Chain Payment with Bridge
+
+```typescript
+async function sendCrossChain(
+  recipient: string,
+  amount: string,
+  destChainId: number
+) {
+  // Preview first to check feasibility
+  const preview = await wallet.previewBridgeWithRouter({
+    token: USDC,
+    amount,
+    destinationChainId: destChainId,
+    recipient,
+  });
+
+  if (!preview.canBridge) {
+    return { success: false, error: preview.blockers.join(', ') };
+  }
+
+  // Execute bridge
+  const result = await wallet.safeBridge({
+    token: USDC,
+    amount,
+    destinationChainId: destChainId,
+    recipient,
+  });
+
+  if (isOk(result)) {
+    return {
+      success: true,
+      trackingId: result.value.trackingId,
+      summary: result.value.summary,
+    };
+  }
+  return { success: false, error: result.error.suggestion };
+}
 ```
 
 ## Task: $ARGUMENTS
