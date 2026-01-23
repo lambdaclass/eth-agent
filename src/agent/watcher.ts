@@ -105,7 +105,25 @@ export class PaymentWatcher {
     const timeout = options.timeout ?? 60000;
 
     return new Promise((resolve, reject) => {
+      let timeoutId: ReturnType<typeof setTimeout> | null = null;
+      let resolved = false;
+
+      const cleanup = (): void => {
+        resolved = true;
+        if (timeoutId !== null) {
+          clearTimeout(timeoutId);
+          timeoutId = null;
+        }
+        this.handlers.delete(handler);
+        if (this.handlers.size === 0) {
+          this.stop();
+        }
+      };
+
       const handler: PaymentHandler = (payment) => {
+        // Already resolved (e.g., by timeout)
+        if (resolved) return;
+
         // Check filters
         if (options.token && payment.token.symbol !== options.token.symbol) {
           return;
@@ -118,10 +136,7 @@ export class PaymentWatcher {
         }
 
         // Payment matches criteria
-        this.handlers.delete(handler);
-        if (this.handlers.size === 0) {
-          this.stop();
-        }
+        cleanup();
         resolve(payment);
       };
 
@@ -129,12 +144,9 @@ export class PaymentWatcher {
       this.start(handler);
 
       // Set timeout
-      setTimeout(() => {
-        if (this.handlers.has(handler)) {
-          this.handlers.delete(handler);
-          if (this.handlers.size === 0) {
-            this.stop();
-          }
+      timeoutId = setTimeout(() => {
+        if (!resolved) {
+          cleanup();
           reject(new Error(`Timeout waiting for payment after ${timeout}ms`));
         }
       }, timeout);
