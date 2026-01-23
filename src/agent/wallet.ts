@@ -963,6 +963,16 @@ export class AgentWallet {
   // ============ Bridge Methods ============
 
   /**
+   * Get the chain ID, caching the result
+   */
+  async getChainId(): Promise<number> {
+    if (this.cachedChainId === undefined) {
+      this.cachedChainId = await this.rpc.getChainId();
+    }
+    return this.cachedChainId;
+  }
+
+  /**
    * Get or create a cached CCTPBridge instance
    */
   private async getBridge(): Promise<CCTPBridge> {
@@ -975,16 +985,6 @@ export class AgentWallet {
       });
     }
     return this.cachedBridge;
-  }
-
-  /**
-   * Get cached chain ID
-   */
-  private async getChainId(): Promise<number> {
-    if (!this.cachedChainId) {
-      this.cachedChainId = await this.rpc.getChainId();
-    }
-    return this.cachedChainId;
   }
 
   /**
