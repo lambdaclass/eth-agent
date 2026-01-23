@@ -80,22 +80,19 @@ eth-agent was designed from first principles for autonomous operation. Safety co
 | Across integration | ✅ | ❌ | ❌ | ❌ | ❌ |
 | Bridge route comparison | ✅ | ❌ | ❌ | ❌ | ❌ |
 | Bridge status tracking | ✅ | ❌ | ❌ | ❌ | ❌ |
-| ERC-4337 smart accounts | ✅ | ❌ | ✅* | ❌ | ❌ |
+| ERC-4337 smart accounts | ✅ | ❌ | ✅ | ❌ | ❌ |
 | Session keys | ✅ | ❌ | ❌ | ❌ | ❌ |
-
-*viem has experimental 4337 support via `viem/account-abstraction`.
 
 ### Developer Experience
 
 | Feature | eth-agent | ethers | viem | wagmi | web3.js |
 |---------|-----------|--------|------|-------|---------|
-| TypeScript-first | ✅ | ❌* | ✅ | ✅ | ❌ |
-| Minimal runtime dependencies | ✅ (2) | ❌ (many) | ❌ (many) | ❌ (many) | ❌ (many) |
-| Tree-shakeable | ✅ | ✅ | ✅ | ✅ | ❌ |
+| TypeScript-first | ✅ | ✅ | ✅ | ✅ | ❌ |
+| Minimal runtime dependencies | ✅ (2) | ✅ (0) | ✅ (8) | ❌ (many) | ❌ (many) |
+| Tree-shakeable | ✅ | ✅ | ✅ | ✅ | ✅ |
 | Human-readable amounts | ✅ | ❌ | ❌ | ❌ | ❌ |
 | Subpath exports | ✅ | ✅ | ✅ | ✅ | ❌ |
 
-*ethers.js v6 has TypeScript support but was not designed TypeScript-first.
 
 ## Why eth-agent is Better for AI Agents
 
@@ -295,9 +292,9 @@ const status = await wallet.getBridgeStatus(txHash);
 ```
 
 Supported protocols:
-- **CCTP (Circle)** — Zero fees, 1:1 burn/mint, 10-20 min
+- **CCTP (Circle)** — Zero fees, 1:1 burn/mint, seconds with Fast Transfers (V2)
 - **Stargate** — ~0.06% fee, 5-15 min
-- **Across** — Variable fees, 2-5 min (fastest)
+- **Across** — Variable fees, ~2 seconds on L2→L2 routes
 
 ## Code Comparison Examples
 
@@ -435,7 +432,7 @@ await wallet.swap({
 | Bridge tokens cross-chain | Integrate each protocol | Unified bridge router |
 | Track spending over time | Build it yourself | Built-in tracking |
 | Prevent transfers to blocked addresses | Build it yourself | Built-in policies |
-| Deploy with minimal dependencies | 50+ transitive deps | 2 audited deps |
+| Deploy with minimal dependencies | Varies by library | 2 audited deps |
 
 eth-agent is not a replacement for ethers.js or viem in all scenarios. If you are building a traditional dApp with full human oversight, those libraries remain excellent choices.
 
