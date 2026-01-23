@@ -174,80 +174,40 @@ const wallet = AgentWallet.create({
 });
 ```
 
-## Token Swaps
+## Bridging
 
-Swap any token using Uniswap V3 with built-in slippage protection and spending limits:
+Bridge USDC across chains using Circle's CCTP (Cross-Chain Transfer Protocol):
 
 ```typescript
-import { AgentWallet } from '@lambdaclass/eth-agent';
-
-const wallet = AgentWallet.create({
-  privateKey: process.env.ETH_PRIVATE_KEY,
-  rpcUrl: 'https://eth.llamarpc.com',
-});
-
-// Swap 100 USDC for ETH
-const result = await wallet.swap({
-  fromToken: 'USDC',
-  toToken: 'ETH',
+// Bridge 100 USDC from Ethereum to Base
+const result = await wallet.bridgeUSDC({
   amount: '100',
-  slippageTolerance: 0.5,  // 0.5% max slippage
+  destinationChainId: 8453,  // Base
 });
-console.log(result.summary);
-// → "Swapped 100 USDC for 0.042 ETH. TX: 0xabc..."
 
-// Get a quote before swapping
-const quote = await wallet.getSwapQuote({
-  fromToken: 'ETH',
-  toToken: 'USDC',
-  amount: '0.1',
-});
-console.log(`Expected: ${quote.toToken.amount} USDC`);
-console.log(`Minimum after slippage: ${quote.amountOutMinimum} USDC`);
-console.log(`Price impact: ${quote.priceImpact}%`);
+console.log(result.burnTxHash);    // TX on source chain
+console.log(result.messageHash);   // Track with this hash
+
+// Wait for Circle attestation (10-30 min on mainnet)
+const attestation = await wallet.waitForBridgeAttestation(result.messageHash);
+
+// Check status anytime
+const status = await wallet.getBridgeStatus(result.messageHash);
+console.log(status.status);  // 'pending_burn' | 'attestation_pending' | 'completed' | ...
 ```
 
-### Supported Swap Tokens
+### Supported Chains
 
-| Token | Symbol | Description |
-|-------|--------|-------------|
-| Ether | `ETH` | Native ETH (auto-wrapped to WETH) |
-| Wrapped Ether | `WETH` | Wrapped ETH |
-| Uniswap | `UNI` | Uniswap governance token |
-| Chainlink | `LINK` | Chainlink oracle token |
-| Wrapped Bitcoin | `WBTC` | Bitcoin on Ethereum |
-| Aave | `AAVE` | Aave governance token |
-| + All stablecoins | `USDC`, `USDT`, etc. | See stablecoins section |
+| Chain | Chain ID | Testnet |
+|-------|----------|---------|
+| Ethereum | 1 | Sepolia (11155111) |
+| Arbitrum | 42161 | Arb Sepolia (421614) |
+| Optimism | 10 | OP Sepolia (11155420) |
+| Base | 8453 | Base Sepolia (84532) |
+| Polygon | 137 | Amoy (80002) |
+| Avalanche | 43114 | Fuji (43113) |
 
-You can also swap any ERC20 token by its contract address:
-
-```typescript
-await wallet.swap({
-  fromToken: '0x1f9840a85d5aF5bf1D1762F925BDADdC4201F984',  // UNI address
-  toToken: 'ETH',
-  amount: '50',
-});
-```
-
-### Swap Limits
-
-Configure spending limits for swaps:
-
-```typescript
-const wallet = AgentWallet.create({
-  privateKey: KEY,
-  limits: {
-    swap: {
-      perTransactionUSD: 5000,    // Max $5,000 per swap
-      perDayUSD: 50000,           // Max $50,000 per day
-      maxSlippagePercent: 1,      // Max 1% slippage allowed
-      maxPriceImpactPercent: 5,   // Max 5% price impact
-      allowedTokens: ['ETH', 'USDC', 'USDT', 'WETH'],  // Optional allowlist
-    },
-  },
-});
-```
-
+**Note:** Only USDC is supported for bridging. Transfers are 1:1 with no protocol fees (only gas costs).
 ## Safety
 
 Spending limits prevent your agent from draining a wallet:

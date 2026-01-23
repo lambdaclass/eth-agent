@@ -13,6 +13,9 @@ Each integration exposes the same core operations:
 | `preview_transaction` | Simulate before executing |
 | `get_token_balance` | Check ERC-20 token balance |
 | `transfer_token` | Transfer ERC-20 tokens |
+| `bridge_usdc` | Bridge USDC to another chain |
+| `preview_bridge` | Preview a bridge operation |
+| `get_bridge_status` | Check bridge transaction status |
 | `get_capabilities` | Get wallet info and limits |
 | `eth_swap` | Swap tokens using Uniswap V3 |
 | `eth_getSwapQuote` | Get a quote before swapping |

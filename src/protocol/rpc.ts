@@ -31,7 +31,9 @@ export class RPCClient {
   private readonly retries: number;
   private readonly retryDelay: number;
   private readonly headers: Record<string, string>;
-  private requestId = 0;
+  // Start with random offset to prevent ID collisions between multiple instances
+  // or when connections persist across app restarts
+  private requestId = Math.floor(Math.random() * 1_000_000_000);
 
   constructor(options: RPCOptions | string) {
     if (typeof options === 'string') {
