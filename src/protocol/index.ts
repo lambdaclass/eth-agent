@@ -9,7 +9,7 @@ export type { RPCOptions, FeeHistory } from './rpc.js';
 
 // Account management
 export { Account, EOA } from './account.js';
-export type { Account as AccountInterface } from './account.js';
+export type { Account as AccountInterface, DisposableAccount } from './account.js';
 
 // Transactions
 export { TransactionBuilder, signTransaction, parseTransaction } from './transaction.js';

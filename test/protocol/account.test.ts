@@ -133,6 +133,61 @@ describe('Account', () => {
       const exported = account.exportPrivateKey();
       expect(exported).toBe(testPrivateKey);
     });
+
+    it('throws when account is disposed', () => {
+      const account = EOA.fromPrivateKey(testPrivateKey);
+      account.dispose();
+      expect(() => account.exportPrivateKey()).toThrow('Account has been disposed');
+    });
+  });
+
+  describe('EOA.usePrivateKey', () => {
+    it('provides scoped access to private key', () => {
+      const account = EOA.fromPrivateKey(testPrivateKey);
+      const result = account.usePrivateKey((key) => key);
+      expect(result).toBe(testPrivateKey);
+    });
+
+    it('returns callback result', () => {
+      const account = EOA.fromPrivateKey(testPrivateKey);
+      const result = account.usePrivateKey((key) => key.length);
+      expect(result).toBe(66);
+    });
+
+    it('throws when account is disposed', () => {
+      const account = EOA.fromPrivateKey(testPrivateKey);
+      account.dispose();
+      expect(() => account.usePrivateKey((key) => key)).toThrow('Account has been disposed');
+    });
+  });
+
+  describe('EOA.dispose', () => {
+    it('marks account as disposed', () => {
+      const account = EOA.fromPrivateKey(testPrivateKey);
+      expect(account.isDisposed).toBe(false);
+      account.dispose();
+      expect(account.isDisposed).toBe(true);
+    });
+
+    it('prevents signing after dispose', () => {
+      const account = EOA.fromPrivateKey(testPrivateKey);
+      const hash = keccak256('test') as Hash;
+      account.dispose();
+      expect(() => account.sign(hash)).toThrow('Account has been disposed');
+    });
+
+    it('prevents message signing after dispose', () => {
+      const account = EOA.fromPrivateKey(testPrivateKey);
+      account.dispose();
+      expect(() => account.signMessage('test')).toThrow('Account has been disposed');
+    });
+
+    it('is idempotent', () => {
+      const account = EOA.fromPrivateKey(testPrivateKey);
+      account.dispose();
+      account.dispose(); // Should not throw
+      expect(account.isDisposed).toBe(true);
+    });
   });
 
   describe('Account alias', () => {
