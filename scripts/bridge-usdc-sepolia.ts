@@ -172,7 +172,7 @@ async function main(): Promise<void> {
   console.log(`Amount: ${result.amount.formatted} USDC`);
   console.log(`Fee: $${result.fee.usd.toFixed(4)}`);
   console.log(`Recipient: ${result.recipient}`);
-  console.log(`Estimated time: ${result.estimatedTime}`);
+  console.log(`Estimated time: ${result.estimatedTime.display}`);
   console.log(`\nView on Etherscan: https://sepolia.etherscan.io/tx/${result.sourceTxHash}`);
   console.log(`\nRemaining daily limit: ${result.limits.remaining.daily}`);
 

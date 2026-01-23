@@ -350,11 +350,20 @@ export interface UnifiedBridgeResult {
   /** Recipient address */
   recipient: Address;
   /** Estimated time to complete */
-  estimatedTime: string;
+  estimatedTime: {
+    minSeconds: number;
+    maxSeconds: number;
+    display: string;
+  };
   /** Human-readable summary */
   summary: string;
-  /** Protocol-specific data */
-  protocolData: Record<string, unknown>;
+  /** Protocol-specific data (CCTP: messageHash, messageBytes, nonce) */
+  protocolData: {
+    messageHash?: Hex;
+    messageBytes?: Hex;
+    nonce?: string;
+    [key: string]: unknown;
+  };
 }
 
 /**
