@@ -13,6 +13,7 @@ import { ENS } from '../protocol/ens.js';
 import { GasOracle } from '../protocol/gas.js';
 import { TransactionBuilder } from '../protocol/transaction.js';
 import { Contract, ERC20_ABI } from '../protocol/contract.js';
+import { NonceManager } from '../protocol/nonce.js';
 import { LimitsEngine, type SpendingLimits } from './limits.js';
 import { SimulationEngine } from './simulation.js';
 import { ApprovalEngine, type ApprovalConfig, type ApprovalHandler } from './approval.js';
@@ -302,6 +303,7 @@ export class AgentWallet {
   private readonly rpc: RPCClient;
   private readonly ens: ENS;
   private readonly gasOracle: GasOracle;
+  private readonly nonceManager: NonceManager;
   private readonly limits: LimitsEngine;
   private readonly simulation: SimulationEngine;
   private readonly approval: ApprovalEngine;
@@ -333,6 +335,7 @@ export class AgentWallet {
     this.rpc = config.rpc;
     this.ens = new ENS(config.rpc);
     this.gasOracle = new GasOracle(config.rpc);
+    this.nonceManager = new NonceManager({ rpc: config.rpc, address: config.account.address });
     this.limits = new LimitsEngine(config.limits);
     this.simulation = new SimulationEngine(config.rpc);
     this.approval = new ApprovalEngine(config.approvalConfig);
@@ -494,7 +497,7 @@ export class AgentWallet {
     }
 
     // 9. Build and sign transaction
-    const nonce = await this.rpc.getTransactionCount(this.address);
+    const nonce = await this.nonceManager.getNextNonce();
     const chainId = await this.rpc.getChainId();
 
     let builder = TransactionBuilder.create()
@@ -519,10 +522,25 @@ export class AgentWallet {
     const signed = builder.sign(this.account);
 
     // 10. Send transaction
-    const hash = await this.rpc.sendRawTransaction(signed.raw);
+    let hash: Hash;
+    try {
+      hash = await this.rpc.sendRawTransaction(signed.raw);
+    } catch (error) {
+      // Reset nonce on send failure
+      await this.nonceManager.onTransactionFailed();
+      throw error;
+    }
 
     // 11. Wait for receipt
-    const receipt = await this.rpc.waitForTransaction(hash);
+    let receipt;
+    try {
+      receipt = await this.rpc.waitForTransaction(hash);
+      this.nonceManager.onTransactionConfirmed();
+    } catch (error) {
+      // Reset nonce if we can't confirm
+      await this.nonceManager.onTransactionFailed();
+      throw error;
+    }
 
     // 12. Record spend
     const gasUsed = receipt.gasUsed * receipt.effectiveGasPrice;

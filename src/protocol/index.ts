@@ -18,6 +18,10 @@ export type { TransactionRequest } from './transaction.js';
 // ENS
 export { ENS, namehash, dnsEncode, isENSName, resolveAddress } from './ens.js';
 
+// Nonce management
+export { NonceManager, createNonceManager } from './nonce.js';
+export type { NonceManagerConfig } from './nonce.js';
+
 // Gas estimation
 export { GasOracle, GAS_LIMITS, calculateTxCost } from './gas.js';
 export type { GasEstimate, GasOracleConfig } from './gas.js';
