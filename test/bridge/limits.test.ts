@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeEach } from 'vitest';
 import { LimitsEngine } from '../../src/agent/limits.js';
 import { USDC } from '../../src/stablecoins/tokens.js';
-import { BridgeLimitError, BridgeDestinationNotAllowedError } from '../../src/agent/errors.js';
+import { BridgeLimitError, BridgeDestinationNotAllowedError } from '../../src/bridge/errors.js';
 
 describe('LimitsEngine - Bridge Limits', () => {
   describe('checkBridgeTransaction', () => {

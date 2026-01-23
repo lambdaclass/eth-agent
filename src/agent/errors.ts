@@ -433,55 +433,5 @@ export class EmergencyStopError extends EthAgentError {
 }
 
 // ============ Bridge Errors ============
-
-export class BridgeLimitError extends EthAgentError {
-  constructor(config: {
-    type: 'transaction' | 'daily';
-    requested: string;
-    limit: string;
-    remaining?: string;
-    resetsAt?: Date;
-  }) {
-    const typeMessages = {
-      transaction: `Bridge amount $${config.requested} exceeds per-transaction limit of $${config.limit}`,
-      daily: `Bridge amount would exceed daily limit. Remaining: $${config.remaining ?? '0'}`,
-    };
-
-    const typeSuggestions = {
-      transaction: `Reduce bridge amount to $${config.limit} or less`,
-      daily: config.resetsAt
-        ? `Reduce amount to $${config.remaining ?? '0'} or wait until ${config.resetsAt.toISOString()}`
-        : `Reduce amount to $${config.remaining ?? '0'} or wait for limit to reset`,
-    };
-
-    super({
-      code: `BRIDGE_${config.type.toUpperCase()}_LIMIT_EXCEEDED`,
-      message: typeMessages[config.type],
-      details: config,
-      suggestion: typeSuggestions[config.type],
-      retryable: config.type === 'daily',
-      retryAfter: config.resetsAt ? config.resetsAt.getTime() - Date.now() : undefined,
-    });
-    this.name = 'BridgeLimitError';
-  }
-}
-
-export class BridgeDestinationNotAllowedError extends EthAgentError {
-  constructor(config: {
-    destinationChainId: number;
-    allowedDestinations?: number[];
-  }) {
-    const allowedInfo = config.allowedDestinations
-      ? `. Allowed destinations: ${config.allowedDestinations.join(', ')}`
-      : '';
-
-    super({
-      code: 'BRIDGE_DESTINATION_NOT_ALLOWED',
-      message: `Destination chain ${String(config.destinationChainId)} is not in allowed list${allowedInfo}`,
-      details: config,
-      suggestion: 'Choose an allowed destination chain or update bridge limits configuration',
-      retryable: false,
-    });
-    this.name = 'BridgeDestinationNotAllowedError';
-  }
-}
+// NOTE: Bridge-specific errors are now in src/bridge/errors.ts
+// Import from there instead: import { BridgeLimitError, ... } from '../bridge/errors.js'

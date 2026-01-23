@@ -10,9 +10,11 @@ import {
   DailyLimitError,
   EmergencyStopError,
   StablecoinLimitError,
+} from './errors.js';
+import {
   BridgeLimitError,
   BridgeDestinationNotAllowedError,
-} from './errors.js';
+} from '../bridge/errors.js';
 import {
   type StablecoinInfo,
   type StablecoinSymbol,
