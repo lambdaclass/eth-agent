@@ -180,12 +180,12 @@ export class RouteSelector {
 
     // Build reason based on priority
     const priorityReasons: Record<RoutePreference['priority'], string> = {
-      cost: `${quote.protocol}: lowest fees ($${String(quote.fee.totalUSD.toFixed(2))})`,
+      cost: `${quote.protocol}: lowest fees ($${quote.fee.totalUSD.toFixed(2)})`,
       speed: `${quote.protocol}: fastest (${quote.estimatedTime.display})`,
       reliability: `${quote.protocol}: most reliable (${String(Math.round(best.components.reliability))}% score)`,
     };
 
-    let reason = priorityReasons[preference.priority];
+    const reason = priorityReasons[preference.priority];
 
     // Add savings comparison if multiple quotes
     let savings: string | undefined;

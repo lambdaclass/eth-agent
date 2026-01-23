@@ -247,7 +247,7 @@ export class BridgeRouter {
   async getQuote(protocolName: string, request: BridgeRequest): Promise<BridgeQuote> {
     const entry = this.protocols.get(protocolName);
 
-    if (!entry || !entry.enabled) {
+    if (!entry?.enabled) {
       throw new BridgeProtocolUnavailableError({
         protocol: protocolName,
         reason: entry ? 'Protocol is disabled' : 'Protocol not registered',
@@ -379,7 +379,7 @@ export class BridgeRouter {
   async bridgeVia(protocolName: string, request: BridgeRequest): Promise<UnifiedBridgeResult> {
     const entry = this.protocols.get(protocolName);
 
-    if (!entry || !entry.enabled) {
+    if (!entry?.enabled) {
       throw new BridgeProtocolUnavailableError({
         protocol: protocolName,
         reason: entry ? 'Protocol is disabled' : 'Protocol not registered',
