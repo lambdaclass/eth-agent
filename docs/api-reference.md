@@ -16,6 +16,16 @@ import {
   type SendOptions,
   type SendResult,
   type BalanceResult,
+  type SwapOptions,
+  type SwapResult,
+  type SwapQuoteResult,
+
+  // Tokens
+  WETH,
+  UNI,
+  LINK,
+  WBTC,
+  resolveToken,
 
   // Errors
   EthAgentError,
@@ -23,6 +33,11 @@ import {
   InsufficientFundsError,
   BlockedAddressError,
   ApprovalDeniedError,
+  SwapError,
+  InsufficientLiquidityError,
+  SlippageExceededError,
+  TokenNotSupportedError,
+  PriceImpactTooHighError,
 } from '@lambdaclass/eth-agent';
 ```
 
@@ -177,18 +192,217 @@ interface LimitStatus {
 }
 ```
 
+### Swap Methods
+
+#### swap
+
+```typescript
+async swap(options: SwapOptions): Promise<SwapResult>
+```
+
+Swap tokens using Uniswap V3. Supports ETH, WETH, and any ERC-20 token.
+
+```typescript
+interface SwapOptions {
+  fromToken: string;           // Token symbol ("USDC", "ETH") or address
+  toToken: string;             // Token symbol or address
+  amount: string | number;     // Human-readable amount ("100" for 100 USDC)
+  slippageTolerance?: number;  // Max slippage as percentage (0.5 = 0.5%)
+  deadline?: number;           // Seconds from now (default: 1200)
+}
+
+interface SwapResult {
+  success: boolean;
+  hash: Hash;
+  summary: string;
+  swap: {
+    tokenIn: { symbol: string; amount: string; rawAmount: bigint };
+    tokenOut: { symbol: string; amount: string; rawAmount: bigint };
+    effectivePrice: string;
+    priceImpact: number;
+  };
+  transaction: {
+    hash: Hash;
+    from: Address;
+    gasUsed?: bigint;
+    effectiveGasPrice?: bigint;
+    blockNumber?: number;
+  };
+  limits: {
+    remaining: { daily: { usd: string } };
+  };
+}
+```
+
+**Slippage Tolerance:**
+
+The `slippageTolerance` parameter is expressed as a **percentage value**, not a decimal:
+- `0.5` = 0.5% maximum slippage
+- `1` = 1% maximum slippage
+- `0.1` = 0.1% maximum slippage
+
+Example:
+```typescript
+await wallet.swap({
+  fromToken: 'USDC',
+  toToken: 'ETH',
+  amount: '100',
+  slippageTolerance: 0.5,  // 0.5% max slippage (NOT 50%!)
+});
+```
+
+#### getSwapQuote
+
+```typescript
+async getSwapQuote(options: SwapOptions): Promise<SwapQuoteResult>
+```
+
+Get a swap quote without executing. Use this to preview expected output.
+
+```typescript
+interface SwapQuoteResult {
+  fromToken: {
+    symbol: string;
+    address: Address;
+    amount: string;
+    rawAmount: bigint;
+    decimals: number;
+  };
+  toToken: {
+    symbol: string;
+    address: Address;
+    amount: string;       // Expected output
+    rawAmount: bigint;
+    decimals: number;
+  };
+  amountOutMinimum: string;  // After slippage protection
+  priceImpact: number;       // As percentage
+  fee: number;               // Uniswap pool fee tier (500, 3000, or 10000)
+  gasEstimate: bigint;
+  effectivePrice: string;    // Price of fromToken in toToken
+  slippageTolerance: number;
+}
+```
+
+Example:
+```typescript
+const quote = await wallet.getSwapQuote({
+  fromToken: 'USDC',
+  toToken: 'ETH',
+  amount: '1000',
+  slippageTolerance: 1,  // 1% slippage
+});
+
+console.log(`Will receive: ~${quote.toToken.amount} ETH`);
+console.log(`Minimum (after slippage): ${quote.amountOutMinimum} ETH`);
+console.log(`Price impact: ${quote.priceImpact}%`);
+console.log(`Fee tier: ${quote.fee / 10000}%`);
+```
+
+#### safeSwap
+
+```typescript
+async safeSwap(options: SwapOptions): Promise<Result<SwapResult, EthAgentError>>
+```
+
+Safe version of `swap()` that returns a Result type instead of throwing.
+
+```typescript
+const result = await wallet.safeSwap({
+  fromToken: 'ETH',
+  toToken: 'USDC',
+  amount: '0.1',
+});
+
+if (result.ok) {
+  console.log(`Swapped! TX: ${result.value.hash}`);
+} else {
+  console.log(`Error: ${result.error.code}`);
+  // Handle specific errors
+  if (result.error.code === 'INSUFFICIENT_LIQUIDITY') {
+    console.log('Try a smaller amount or different token pair');
+  }
+}
+```
+
+#### getSwapLimits
+
+```typescript
+getSwapLimits(): SwapLimitStatus
+```
+
+Get current swap spending limits and usage.
+
+```typescript
+interface SwapLimitStatus {
+  perTransaction: { limit: string; available: string };
+  daily: {
+    limit: string;
+    used: string;
+    remaining: string;
+    resetsAt: Date;
+  };
+  maxSlippagePercent: number;
+  maxPriceImpactPercent: number;
+  allowedTokens: string[] | null;  // null = all allowed
+  blockedTokens: string[];
+}
+```
+
 ## SpendingLimits
 
 ```typescript
 interface SpendingLimits {
+  // ETH limits
   perTransaction?: string;  // "0.1 ETH"
   perHour?: string;         // "1 ETH"
   perDay?: string;          // "5 ETH"
   emergencyStop?: {
     minBalanceRequired: string;  // "0.05 ETH"
   };
+
+  // Stablecoin limits
+  stablecoin?: {
+    perTransactionUSD?: string | number;  // "1000" = $1,000
+    perHourUSD?: string | number;
+    perDayUSD?: string | number;
+  };
+
+  // Swap limits
+  swap?: {
+    perTransactionUSD?: string | number;  // Max USD per swap
+    perDayUSD?: string | number;          // Max USD per day
+    maxSlippagePercent?: number;          // Max slippage (1 = 1%)
+    maxPriceImpactPercent?: number;       // Max price impact (5 = 5%)
+    allowedTokens?: string[];             // Allowlist by symbol
+    blockedTokens?: string[];             // Blocklist by symbol
+  };
 }
 ```
+
+### Swap Limits Configuration
+
+```typescript
+const wallet = AgentWallet.create({
+  privateKey: KEY,
+  limits: {
+    swap: {
+      perTransactionUSD: 5000,      // Max $5,000 per swap
+      perDayUSD: 50000,             // Max $50,000 per day
+      maxSlippagePercent: 1,        // Max 1% slippage allowed
+      maxPriceImpactPercent: 5,     // Max 5% price impact
+      allowedTokens: ['ETH', 'USDC', 'USDT', 'WETH', 'UNI'],
+      blockedTokens: ['SCAM_TOKEN'],
+    },
+  },
+});
+```
+
+**Slippage vs Price Impact:**
+- **Slippage** is the maximum acceptable difference between quoted and executed price
+- **Price impact** is how much the swap affects the pool's price
+
+If a swap would exceed `maxPriceImpactPercent`, it's rejected to protect against unfavorable trades in low-liquidity pools.
 
 ## SafetyPresets
 
@@ -450,6 +664,18 @@ interface EthAgentError {
 | `REVERT` | `RevertError` | Contract reverted |
 | `EMERGENCY_STOP` | `EmergencyStopError` | Balance below minimum |
 
+#### Swap Error Codes
+
+| Code | Error Class | Description |
+|------|-------------|-------------|
+| `INSUFFICIENT_LIQUIDITY` | `InsufficientLiquidityError` | No liquidity for token pair |
+| `SLIPPAGE_EXCEEDED` | `SlippageExceededError` | Price moved beyond tolerance |
+| `TOKEN_NOT_SUPPORTED` | `TokenNotSupportedError` | Token not on this chain |
+| `PRICE_IMPACT_TOO_HIGH` | `PriceImpactTooHighError` | Swap would move price too much |
+| `SWAP_TRANSACTION_LIMIT_EXCEEDED` | `SwapLimitError` | Swap USD exceeds per-tx limit |
+| `SWAP_DAILY_LIMIT_EXCEEDED` | `SwapLimitError` | Swap USD exceeds daily limit |
+| `TOKEN_NOT_ALLOWED` | `TokenNotAllowedError` | Token blocked or not in allowlist |
+
 ## Result Types
 
 For explicit error handling without exceptions:
@@ -477,9 +703,11 @@ interface Err<E> { ok: false; error: E; }
 
 ```typescript
 // Returns Result instead of throwing
-await wallet.safeSend(options);      // Result<SendResult, EthAgentError>
-await wallet.safeGetBalance();       // Result<BalanceResult, EthAgentError>
+await wallet.safeSend(options);       // Result<SendResult, EthAgentError>
+await wallet.safeGetBalance();        // Result<BalanceResult, EthAgentError>
 await wallet.safeTransferToken(opts); // Result<SendResult, EthAgentError>
+await wallet.safeSwap(options);       // Result<SwapResult, EthAgentError>
+await wallet.safeSendUSDC(options);   // Result<SendStablecoinResult, EthAgentError>
 ```
 
 ### Result Utilities

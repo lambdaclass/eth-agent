@@ -10,6 +10,9 @@ import {
   DailyLimitError,
   EmergencyStopError,
   StablecoinLimitError,
+  SwapLimitError,
+  TokenNotAllowedError,
+  PriceImpactTooHighError,
 } from './errors.js';
 import {
   type StablecoinInfo,
@@ -48,6 +51,44 @@ export interface SpendingLimits {
     // Per-token specific limits
     byToken?: Partial<Record<StablecoinSymbol, StablecoinLimits>>;
   };
+
+  /**
+   * Swap limits (for Uniswap and other DEX swaps)
+   *
+   * Controls spending limits, slippage tolerance, and token restrictions for token swaps.
+   */
+  swap?: {
+    /** Maximum USD value per swap transaction (e.g., "5000" = $5,000 limit) */
+    perTransactionUSD?: string | number;
+    /** Maximum USD value of swaps per day (e.g., "50000" = $50,000 daily limit) */
+    perDayUSD?: string | number;
+
+    /**
+     * Maximum allowed slippage as a percentage value.
+     * - 0.5 means 0.5% maximum slippage
+     * - 1 means 1% maximum slippage
+     * - Default: 1 (1%)
+     *
+     * Swaps requesting higher slippage than this will be rejected.
+     */
+    maxSlippagePercent?: number;
+
+    /**
+     * Maximum allowed price impact as a percentage value.
+     * - 1 means 1% maximum price impact
+     * - 5 means 5% maximum price impact
+     * - Default: 5 (5%)
+     *
+     * Swaps with higher price impact will be rejected to protect against
+     * unfavorable trades in low-liquidity pools.
+     */
+    maxPriceImpactPercent?: number;
+
+    /** Only allow swapping these tokens (by symbol, e.g., ["USDC", "ETH", "WETH"]) */
+    allowedTokens?: string[];
+    /** Block these tokens from swapping (by symbol) */
+    blockedTokens?: string[];
+  };
 }
 
 interface SpendingRecord {
@@ -66,6 +107,22 @@ interface StablecoinLimitState {
   perTransaction: bigint;  // In normalized 6 decimals
   perHour: bigint;
   perDay: bigint;
+}
+
+interface SwapSpendingRecord {
+  tokenIn: string;
+  tokenOut: string;
+  usdValue: bigint;  // Normalized to 6 decimals
+  timestamp: number;
+}
+
+interface SwapLimitState {
+  perTransaction: bigint;  // In normalized 6 decimals (USD)
+  perDay: bigint;
+  maxSlippagePercent: number;
+  maxPriceImpactPercent: number;
+  allowedTokens: Set<string> | null;  // null = all allowed
+  blockedTokens: Set<string>;
 }
 
 interface LimitState {
@@ -91,6 +148,10 @@ interface LimitState {
     byToken: Map<StablecoinSymbol, StablecoinLimitState>;
   };
   stablecoinHistory: StablecoinSpendingRecord[];
+
+  // Swap limits and history
+  swapLimits: SwapLimitState;
+  swapHistory: SwapSpendingRecord[];
 
   // Emergency stop flag
   stopped: boolean;
@@ -120,6 +181,8 @@ export class LimitsEngine {
       gasHistory: [],
       stablecoinLimits: this.parseStablecoinLimits(limits.stablecoin),
       stablecoinHistory: [],
+      swapLimits: this.parseSwapLimits(limits.swap),
+      swapHistory: [],
       stopped: false,
     };
   }
@@ -150,6 +213,40 @@ export class LimitsEngine {
     }
 
     return { global, byToken };
+  }
+
+  /**
+   * Parse swap limits configuration
+   */
+  private parseSwapLimits(config?: SpendingLimits['swap']): SwapLimitState {
+    // Parse allowed tokens list
+    let allowedTokens: Set<string> | null = null;
+    if (config?.allowedTokens && config.allowedTokens.length > 0) {
+      allowedTokens = new Set(config.allowedTokens.map((t) => t.toUpperCase()));
+    }
+
+    // Parse blocked tokens list
+    const blockedTokens = new Set<string>();
+    if (config?.blockedTokens) {
+      for (const t of config.blockedTokens) {
+        blockedTokens.add(t.toUpperCase());
+      }
+    }
+
+    return {
+      perTransaction: this.parseUSDLimit(
+        config?.perTransactionUSD,
+        5000n * 10n ** BigInt(USD_DECIMALS) // $5000 default per swap
+      ),
+      perDay: this.parseUSDLimit(
+        config?.perDayUSD,
+        50000n * 10n ** BigInt(USD_DECIMALS) // $50,000 default per day
+      ),
+      maxSlippagePercent: config?.maxSlippagePercent ?? 1, // 1% default
+      maxPriceImpactPercent: config?.maxPriceImpactPercent ?? 5, // 5% default
+      allowedTokens,
+      blockedTokens,
+    };
   }
 
   /**
@@ -530,6 +627,202 @@ export class LimitsEngine {
   private cleanupStablecoinHistory(): void {
     const weekAgo = Date.now() - 7 * 24 * 60 * 60 * 1000;
     this.state.stablecoinHistory = this.state.stablecoinHistory.filter((r) => r.timestamp >= weekAgo);
+  }
+
+  // ============ Swap Limit Methods ============
+
+  /**
+   * Check if a token is allowed for swapping
+   */
+  isTokenAllowedForSwap(tokenSymbol: string): boolean {
+    const normalized = tokenSymbol.toUpperCase();
+
+    // Check blocked tokens first
+    if (this.state.swapLimits.blockedTokens.has(normalized)) {
+      return false;
+    }
+
+    // If allowedTokens is null, all tokens are allowed (except blocked)
+    if (this.state.swapLimits.allowedTokens === null) {
+      return true;
+    }
+
+    // Otherwise, must be in allowed list
+    return this.state.swapLimits.allowedTokens.has(normalized);
+  }
+
+  /**
+   * Get maximum allowed slippage percentage
+   */
+  getMaxSlippagePercent(): number {
+    return this.state.swapLimits.maxSlippagePercent;
+  }
+
+  /**
+   * Get maximum allowed price impact percentage
+   */
+  getMaxPriceImpactPercent(): number {
+    return this.state.swapLimits.maxPriceImpactPercent;
+  }
+
+  /**
+   * Check if a swap transaction is within limits
+   * @param tokenInSymbol - Symbol of input token
+   * @param tokenOutSymbol - Symbol of output token
+   * @param usdValue - USD value of the swap (normalized to 6 decimals)
+   * @param priceImpact - Price impact percentage
+   */
+  checkSwapTransaction(
+    tokenInSymbol: string,
+    tokenOutSymbol: string,
+    usdValue: bigint,
+    priceImpact?: number
+  ): void {
+    // Check emergency stop
+    if (this.state.stopped) {
+      throw new EmergencyStopError(this.state.stopReason ?? 'Wallet is stopped');
+    }
+
+    // Check token allowlists/blocklists
+    if (!this.isTokenAllowedForSwap(tokenInSymbol)) {
+      const reason = this.state.swapLimits.blockedTokens.has(tokenInSymbol.toUpperCase())
+        ? 'blocked'
+        : 'not_allowed';
+      throw new TokenNotAllowedError({ token: tokenInSymbol, reason });
+    }
+
+    if (!this.isTokenAllowedForSwap(tokenOutSymbol)) {
+      const reason = this.state.swapLimits.blockedTokens.has(tokenOutSymbol.toUpperCase())
+        ? 'blocked'
+        : 'not_allowed';
+      throw new TokenNotAllowedError({ token: tokenOutSymbol, reason });
+    }
+
+    // Check price impact
+    if (priceImpact !== undefined && priceImpact > this.state.swapLimits.maxPriceImpactPercent) {
+      throw new PriceImpactTooHighError({
+        priceImpact,
+        maxAllowed: this.state.swapLimits.maxPriceImpactPercent,
+      });
+    }
+
+    const formattedValue = formatUnits(usdValue, USD_DECIMALS);
+
+    // Check per-transaction limit
+    if (usdValue > this.state.swapLimits.perTransaction) {
+      throw new SwapLimitError({
+        type: 'transaction',
+        requested: formattedValue,
+        limit: formatUnits(this.state.swapLimits.perTransaction, USD_DECIMALS),
+      });
+    }
+
+    // Check daily limit
+    const dailySpent = this.getSwapSpentInWindow(24 * 60 * 60 * 1000);
+    const dailyRemaining = this.state.swapLimits.perDay - dailySpent;
+
+    if (usdValue > dailyRemaining) {
+      const resetsAt = this.getSwapWindowResetTime(24 * 60 * 60 * 1000);
+      throw new SwapLimitError({
+        type: 'daily',
+        requested: formattedValue,
+        remaining: formatUnits(dailyRemaining > 0n ? dailyRemaining : 0n, USD_DECIMALS),
+        resetsAt,
+      });
+    }
+  }
+
+  /**
+   * Record a successful swap transaction
+   */
+  recordSwapSpend(tokenInSymbol: string, tokenOutSymbol: string, usdValue: bigint): void {
+    const now = Date.now();
+
+    this.state.swapHistory.push({
+      tokenIn: tokenInSymbol.toUpperCase(),
+      tokenOut: tokenOutSymbol.toUpperCase(),
+      usdValue,
+      timestamp: now,
+    });
+
+    // Clean up old history
+    this.cleanupSwapHistory();
+  }
+
+  /**
+   * Get swap spending status
+   */
+  getSwapStatus(): {
+    perTransaction: { limit: string; available: string };
+    daily: { limit: string; used: string; remaining: string; resetsAt: Date };
+    maxSlippagePercent: number;
+    maxPriceImpactPercent: number;
+    allowedTokens: string[] | null;
+    blockedTokens: string[];
+  } {
+    const dailySpent = this.getSwapSpentInWindow(24 * 60 * 60 * 1000);
+    const dailyRemaining = this.state.swapLimits.perDay > dailySpent
+      ? this.state.swapLimits.perDay - dailySpent
+      : 0n;
+
+    return {
+      perTransaction: {
+        limit: formatUnits(this.state.swapLimits.perTransaction, USD_DECIMALS),
+        available: formatUnits(this.state.swapLimits.perTransaction, USD_DECIMALS),
+      },
+      daily: {
+        limit: formatUnits(this.state.swapLimits.perDay, USD_DECIMALS),
+        used: formatUnits(dailySpent, USD_DECIMALS),
+        remaining: formatUnits(dailyRemaining, USD_DECIMALS),
+        resetsAt: this.getSwapWindowResetTime(24 * 60 * 60 * 1000),
+      },
+      maxSlippagePercent: this.state.swapLimits.maxSlippagePercent,
+      maxPriceImpactPercent: this.state.swapLimits.maxPriceImpactPercent,
+      allowedTokens: this.state.swapLimits.allowedTokens
+        ? Array.from(this.state.swapLimits.allowedTokens)
+        : null,
+      blockedTokens: Array.from(this.state.swapLimits.blockedTokens),
+    };
+  }
+
+  /**
+   * Get maximum USD value for a swap considering limits
+   */
+  getMaxSwapUSD(): bigint {
+    if (this.state.stopped) return 0n;
+
+    const dailyRemaining = this.state.swapLimits.perDay - this.getSwapSpentInWindow(24 * 60 * 60 * 1000);
+
+    // Return the minimum of per-transaction and daily remaining
+    let max = this.state.swapLimits.perTransaction;
+    if (dailyRemaining < max) max = dailyRemaining;
+
+    return max > 0n ? max : 0n;
+  }
+
+  private getSwapSpentInWindow(windowMs: number): bigint {
+    const cutoff = Date.now() - windowMs;
+    return this.state.swapHistory
+      .filter((r) => r.timestamp >= cutoff)
+      .reduce((sum, r) => sum + r.usdValue, 0n);
+  }
+
+  private getSwapWindowResetTime(windowMs: number): Date {
+    const cutoff = Date.now() - windowMs;
+    const filtered = this.state.swapHistory
+      .filter((r) => r.timestamp >= cutoff)
+      .sort((a, b) => a.timestamp - b.timestamp);
+
+    const oldest = filtered[0];
+    if (oldest) {
+      return new Date(oldest.timestamp + windowMs);
+    }
+    return new Date();
+  }
+
+  private cleanupSwapHistory(): void {
+    const weekAgo = Date.now() - 7 * 24 * 60 * 60 * 1000;
+    this.state.swapHistory = this.state.swapHistory.filter((r) => r.timestamp >= weekAgo);
   }
 
   /**

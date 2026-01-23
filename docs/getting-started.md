@@ -153,6 +153,96 @@ const balance = await wallet.getTokenBalance(
 console.log(`${balance.formatted} ${balance.symbol}`);
 ```
 
+## Swap Tokens
+
+Swap any token using Uniswap V3 with built-in slippage protection:
+
+```typescript
+// Get a quote first (optional but recommended)
+const quote = await wallet.getSwapQuote({
+  fromToken: 'USDC',
+  toToken: 'ETH',
+  amount: '100',
+});
+
+console.log(`Input: ${quote.fromToken.amount} ${quote.fromToken.symbol}`);
+console.log(`Output: ${quote.toToken.amount} ${quote.toToken.symbol}`);
+console.log(`Minimum output (after slippage): ${quote.amountOutMinimum}`);
+console.log(`Price impact: ${quote.priceImpact}%`);
+
+// Execute the swap
+const result = await wallet.swap({
+  fromToken: 'USDC',
+  toToken: 'ETH',
+  amount: '100',
+  slippageTolerance: 0.5,  // 0.5% max slippage (not 50%!)
+});
+
+console.log(result.summary);
+// → "Swapped 100 USDC for 0.042 ETH. TX: 0xabc..."
+```
+
+### Supported Tokens
+
+Use token symbols or contract addresses:
+
+```typescript
+// By symbol (built-in tokens)
+await wallet.swap({ fromToken: 'ETH', toToken: 'USDC', amount: '0.1' });
+await wallet.swap({ fromToken: 'WETH', toToken: 'UNI', amount: '0.5' });
+await wallet.swap({ fromToken: 'LINK', toToken: 'USDT', amount: '10' });
+
+// By contract address (any ERC-20)
+await wallet.swap({
+  fromToken: '0x1f9840a85d5aF5bf1D1762F925BDADdC4201F984',  // UNI
+  toToken: 'ETH',
+  amount: '50',
+});
+```
+
+### Swap with Limits
+
+Configure swap-specific spending limits:
+
+```typescript
+const wallet = AgentWallet.create({
+  privateKey: KEY,
+  limits: {
+    swap: {
+      perTransactionUSD: 5000,     // Max $5,000 per swap
+      perDayUSD: 50000,            // Max $50,000 per day
+      maxSlippagePercent: 1,       // Max 1% slippage allowed
+      maxPriceImpactPercent: 5,    // Max 5% price impact
+      allowedTokens: ['ETH', 'USDC', 'USDT', 'WETH'],  // Optional allowlist
+    },
+  },
+});
+
+// Check swap limits
+const limits = wallet.getSwapLimits();
+console.log(`Daily remaining: $${limits.daily.remaining}`);
+```
+
+### Safe Swap (Result Types)
+
+Use `safeSwap` for explicit error handling:
+
+```typescript
+const result = await wallet.safeSwap({
+  fromToken: 'USDC',
+  toToken: 'ETH',
+  amount: '100',
+});
+
+if (result.ok) {
+  console.log(`Swapped! TX: ${result.value.hash}`);
+  console.log(`Received: ${result.value.swap.tokenOut.amount} ETH`);
+} else {
+  console.log(`Error: ${result.error.code}`);
+  console.log(`Suggestion: ${result.error.suggestion}`);
+}
+```
+
 ## Error Handling
 
 Errors are structured for programmatic handling:

@@ -106,3 +106,24 @@ export type {
   PasskeySignature,
   WebAuthnData,
 } from './passkey.js';
+
+// Uniswap
+export {
+  UniswapClient,
+  createUniswapClient,
+  isUniswapSupported,
+  getDefaultDeadline,
+  UNISWAP_ROUTER_ADDRESSES,
+  UNISWAP_QUOTER_ADDRESSES,
+  WETH_ADDRESSES,
+  FEE_TIERS,
+  SWAP_ROUTER_ABI,
+  QUOTER_ABI,
+} from './uniswap.js';
+export type {
+  SwapQuote,
+  SwapParams,
+  SwapExecutionResult,
+  UniswapClientConfig,
+  FeeTier,
+} from './uniswap.js';

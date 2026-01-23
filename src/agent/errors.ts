@@ -431,3 +431,130 @@ export class EmergencyStopError extends EthAgentError {
     this.name = 'EmergencyStopError';
   }
 }
+
+// ============ Swap Errors ============
+
+export class SwapError extends EthAgentError {
+  constructor(config: Omit<ErrorDetails, 'code'> & { code?: string }) {
+    super({ ...config, code: config.code ?? 'SWAP_ERROR' });
+    this.name = 'SwapError';
+  }
+}
+
+export class InsufficientLiquidityError extends SwapError {
+  constructor(config: {
+    tokenIn: string;
+    tokenOut: string;
+    chainId: number;
+  }) {
+    super({
+      code: 'INSUFFICIENT_LIQUIDITY',
+      message: `No liquidity found for ${config.tokenIn} -> ${config.tokenOut} on chain ${config.chainId}`,
+      details: config,
+      suggestion: 'Try a different token pair, smaller amount, or use a different DEX',
+      retryable: false,
+    });
+    this.name = 'InsufficientLiquidityError';
+  }
+}
+
+export class SlippageExceededError extends SwapError {
+  constructor(config: {
+    expected: string;
+    actual: string;
+    slippageTolerance: number;
+  }) {
+    super({
+      code: 'SLIPPAGE_EXCEEDED',
+      message: `Slippage exceeded: expected ${config.expected}, got ${config.actual} (tolerance: ${config.slippageTolerance}%)`,
+      details: config,
+      suggestion: 'Increase slippage tolerance or try again with a smaller amount',
+      retryable: true,
+      retryAfter: 5000,
+    });
+    this.name = 'SlippageExceededError';
+  }
+}
+
+export class TokenNotSupportedError extends SwapError {
+  constructor(config: {
+    token: string;
+    chainId: number;
+  }) {
+    super({
+      code: 'TOKEN_NOT_SUPPORTED',
+      message: `Token "${config.token}" is not supported on chain ${config.chainId}`,
+      details: config,
+      suggestion: 'Use a supported token or switch to a different network',
+      retryable: false,
+    });
+    this.name = 'TokenNotSupportedError';
+  }
+}
+
+export class PriceImpactTooHighError extends SwapError {
+  constructor(config: {
+    priceImpact: number;
+    maxAllowed: number;
+  }) {
+    super({
+      code: 'PRICE_IMPACT_TOO_HIGH',
+      message: `Price impact ${config.priceImpact.toFixed(2)}% exceeds maximum allowed ${config.maxAllowed}%`,
+      details: config,
+      suggestion: 'Reduce swap amount or split into multiple smaller swaps',
+      retryable: false,
+    });
+    this.name = 'PriceImpactTooHighError';
+  }
+}
+
+export class SwapLimitError extends LimitError {
+  constructor(config: {
+    type: 'transaction' | 'daily';
+    requested: string;
+    limit?: string;
+    remaining?: string;
+    resetsAt?: Date;
+  }) {
+    const typeMessages = {
+      transaction: `Swap amount $${config.requested} exceeds per-transaction limit of $${config.limit}`,
+      daily: `Swap would exceed daily limit. Remaining: $${config.remaining}`,
+    };
+
+    const typeSuggestions = {
+      transaction: `Reduce swap amount to $${config.limit} or less`,
+      daily: `Reduce amount to $${config.remaining} or wait until ${config.resetsAt?.toISOString() ?? 'limit resets'}`,
+    };
+
+    super({
+      code: `SWAP_${config.type.toUpperCase()}_LIMIT_EXCEEDED`,
+      message: typeMessages[config.type],
+      details: config,
+      suggestion: typeSuggestions[config.type],
+      retryable: config.type === 'daily',
+      retryAfter: config.resetsAt ? config.resetsAt.getTime() - Date.now() : undefined,
+    });
+    this.name = 'SwapLimitError';
+  }
+}
+
+export class TokenNotAllowedError extends SwapError {
+  constructor(config: {
+    token: string;
+    reason: 'blocked' | 'not_allowed';
+  }) {
+    const message =
+      config.reason === 'blocked'
+        ? `Token "${config.token}" is blocked for swapping`
+        : `Token "${config.token}" is not in the allowed tokens list`;
+
+    super({
+      code: 'TOKEN_NOT_ALLOWED',
+      message,
+      details: config,
+      suggestion: 'Use a different token that is allowed by the wallet configuration',
+      retryable: false,
+    });
+    this.name = 'TokenNotAllowedError';
+  }
+}
