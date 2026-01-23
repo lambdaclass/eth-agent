@@ -193,6 +193,42 @@ describe('AgentWallet', () => {
       expect(wallet).toBeInstanceOf(AgentWallet);
     });
 
+    it('uses scroll network', () => {
+      const wallet = AgentWallet.create({
+        privateKey: testPrivateKey,
+        network: 'scroll',
+      });
+
+      expect(wallet).toBeInstanceOf(AgentWallet);
+    });
+
+    it('uses scroll-sepolia testnet', () => {
+      const wallet = AgentWallet.create({
+        privateKey: testPrivateKey,
+        network: 'scroll-sepolia',
+      });
+
+      expect(wallet).toBeInstanceOf(AgentWallet);
+    });
+
+    it('uses linea network', () => {
+      const wallet = AgentWallet.create({
+        privateKey: testPrivateKey,
+        network: 'linea',
+      });
+
+      expect(wallet).toBeInstanceOf(AgentWallet);
+    });
+
+    it('uses linea-sepolia testnet', () => {
+      const wallet = AgentWallet.create({
+        privateKey: testPrivateKey,
+        network: 'linea-sepolia',
+      });
+
+      expect(wallet).toBeInstanceOf(AgentWallet);
+    });
+
     it('configures trusted addresses', () => {
       const wallet = AgentWallet.create({
         privateKey: testPrivateKey,

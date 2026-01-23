@@ -78,7 +78,7 @@ export interface AgentWalletConfig {
   privateKey?: Hex | string;
 
   // Network
-  network?: 'mainnet' | 'sepolia' | 'goerli' | 'taiko' | 'taiko-hekla' | string;
+  network?: 'mainnet' | 'sepolia' | 'goerli' | 'taiko' | 'taiko-hekla' | 'scroll' | 'scroll-sepolia' | 'linea' | 'linea-sepolia' | string;
   rpcUrl?: string;
 
   // Safety
@@ -377,6 +377,18 @@ export class AgentWallet {
           break;
         case 'taiko-hekla':
           rpcUrl = 'https://rpc.hekla.taiko.xyz';
+          break;
+        case 'scroll':
+          rpcUrl = 'https://rpc.scroll.io';
+          break;
+        case 'scroll-sepolia':
+          rpcUrl = 'https://sepolia-rpc.scroll.io';
+          break;
+        case 'linea':
+          rpcUrl = 'https://rpc.linea.build';
+          break;
+        case 'linea-sepolia':
+          rpcUrl = 'https://rpc.sepolia.linea.build';
           break;
         default:
           rpcUrl = config.network ?? 'https://eth.llamarpc.com';

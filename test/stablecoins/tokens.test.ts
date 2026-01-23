@@ -128,6 +128,44 @@ describe('Stablecoin Tokens', () => {
     });
   });
 
+  describe('Scroll network support', () => {
+    it('returns USDC address for Scroll mainnet', () => {
+      const address = getStablecoinAddress(USDC, 534352);
+      expect(address).toBe('0x06eFdBFf2a14a7c8E15944D1F4A48F9F95F663A4');
+    });
+
+    it('returns USDT address for Scroll mainnet', () => {
+      const address = getStablecoinAddress(USDT, 534352);
+      expect(address).toBe('0xf55BEC9cafDbE8730f096Aa55dad6D22d44099Df');
+    });
+
+    it('returns stablecoins available on Scroll', () => {
+      const stablecoins = getStablecoinsForChain(534352);
+      expect(stablecoins.has('USDC')).toBe(true);
+      expect(stablecoins.has('USDT')).toBe(true);
+      expect(stablecoins.has('DAI')).toBe(false);
+    });
+  });
+
+  describe('Linea network support', () => {
+    it('returns USDC address for Linea mainnet', () => {
+      const address = getStablecoinAddress(USDC, 59144);
+      expect(address).toBe('0x176211869cA2b568f2A7D4EE941E073a821EE1ff');
+    });
+
+    it('returns USDT address for Linea mainnet', () => {
+      const address = getStablecoinAddress(USDT, 59144);
+      expect(address).toBe('0xA219439258ca9da29E9Cc4cE5596924745e12B93');
+    });
+
+    it('returns stablecoins available on Linea', () => {
+      const stablecoins = getStablecoinsForChain(59144);
+      expect(stablecoins.has('USDC')).toBe(true);
+      expect(stablecoins.has('USDT')).toBe(true);
+      expect(stablecoins.has('DAI')).toBe(false);
+    });
+  });
+
   describe('isKnownStablecoin', () => {
     it('identifies USDC on mainnet', () => {
       const info = isKnownStablecoin('0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48', 1);

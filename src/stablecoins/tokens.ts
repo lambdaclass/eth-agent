@@ -26,6 +26,8 @@ export const USDC: StablecoinInfo = {
     56: '0x8AC76a51cc950d9822D68b83fE1Ad97B32Cd580d',      // BNB Chain
     11155111: '0x1c7D4B196Cb0C7B01d743Fbc6116a902379C7238', // Sepolia
     167000: '0x07d83526730c7438048d55a4fc0b850e2aab6f0b',   // Taiko Mainnet
+    534352: '0x06eFdBFf2a14a7c8E15944D1F4A48F9F95F663A4',   // Scroll Mainnet
+    59144: '0x176211869cA2b568f2A7D4EE941E073a821EE1ff',    // Linea Mainnet
   },
 };
 
@@ -45,6 +47,8 @@ export const USDT: StablecoinInfo = {
     43114: '0x9702230A8Ea53601f5cD2dc00fDBc13d4dF4A8c7',   // Avalanche
     56: '0x55d398326f99059fF775485246999027B3197955',      // BNB Chain
     167000: '0x2DEF195713CF4a606B49D07E520e22C17899a736',   // Taiko Mainnet
+    534352: '0xf55BEC9cafDbE8730f096Aa55dad6D22d44099Df',   // Scroll Mainnet
+    59144: '0xA219439258ca9da29E9Cc4cE5596924745e12B93',    // Linea Mainnet
   },
 };
 
