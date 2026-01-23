@@ -396,7 +396,7 @@ if (!preview.canExecute) console.log(preview.blockers);
 
 ## AI Integrations
 
-Ready-to-use tool definitions for AI frameworks with 18 tools covering transfers, swaps, and bridging:
+Ready-to-use tool definitions for AI frameworks with 20 tools covering transfers, swaps, bridging, and network info:
 
 ```typescript
 import { AgentWallet, anthropicTools } from '@lambdaclass/eth-agent';
@@ -430,6 +430,7 @@ createMCPServer({ wallet }).listen();
 | **Balances** | `eth_getBalance`, `eth_getTokenBalance`, `eth_getStablecoinBalance`, `eth_getStablecoinBalances` |
 | **Swaps** | `eth_swap`, `eth_getSwapQuote`, `eth_getSwapLimits` |
 | **Bridging** | `eth_bridge`, `eth_previewBridge`, `eth_compareBridgeRoutes`, `eth_getBridgeStatus`, `eth_getBridgeLimits` |
+| **Networks** | `eth_getNetworks`, `eth_getNetworkInfo` |
 | **Info** | `eth_getLimits`, `eth_getCapabilities` |
 
 All tools return structured responses with `success`, `data`, and `summary` fields for easy LLM consumption.

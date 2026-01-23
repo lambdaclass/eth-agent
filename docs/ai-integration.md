@@ -644,16 +644,16 @@ When starting a session, agents should gather context before executing operation
 
 ```typescript
 // 1. Understand the current network
-network_info({})
+eth_getNetworkInfo({})
 // → "Connected to Ethereum Mainnet (1). Stablecoins: USDC, USDT, USDS, DAI, PYUSD, FRAX"
 
 // 2. Check available funds
-stablecoin_balances({})
+eth_getStablecoinBalances({})
 // → { USDC: "1,234.56", USDT: "500.00", ... }
 
 // 3. (Optional) Discover available networks for lower fees
-network_list({})
-// → "12 networks: mainnet, sepolia, arbitrum, optimism, base, polygon, taiko, scroll, linea, zksync..."
+eth_getNetworks({})
+// → "10 L2 networks available for lower fees: Optimism, Polygon, Base, Arbitrum, ..."
 ```
 
 ### Workflow: Pay Someone with Lowest Fees
@@ -662,31 +662,31 @@ network_list({})
 User: "Pay alice.eth 50 USDC with the lowest fees possible"
 
 Agent workflow:
-1. network_list({})
-   → Discover L2 options: arbitrum, optimism, base, polygon, taiko, scroll, linea, zksync
+1. eth_getNetworks({})
+   → Discover L2 options: Arbitrum, Optimism, Base, Polygon, Taiko, Scroll, Linea, zkSync Era
 
 2. Check if recipient is on a specific L2 (ask user if unclear)
    → User confirms: "Use Scroll"
 
-3. usdc_balance({})
+3. eth_getStablecoinBalance({ token: 'USDC' })
    → Check current balance on mainnet: "1,234.56 USDC"
 
-4. usdc_bridge_preview({ destinationChain: 'scroll', amount: '100' })
+4. eth_previewBridge({ token: 'USDC', destinationChainId: 534352, amount: '100' })
    → Preview bridge: "Can bridge. Est. time: 15-30 min. Fee: ~$0.50"
 
-5. usdc_bridge({ destinationChain: 'scroll', amount: '100' })
-   → Execute bridge, get messageHash
+5. eth_bridge({ token: 'USDC', destinationChainId: 534352, amount: '100' })
+   → Execute bridge, get trackingId
 
 6. [Wait for bridge - inform user this takes 15-30 minutes]
 
-7. usdc_bridge_status({ messageHash: '0x...' })
-   → Poll until "attestation_ready"
+7. eth_getBridgeStatus({ trackingId: 'CCTP_1_534352_0x...' })
+   → Poll until complete
 
 8. [APPLICATION CODE: Create new wallet for Scroll]
    const scrollWallet = AgentWallet.create({ privateKey: KEY, network: 'scroll' });
    const scrollTools = createTools(scrollWallet);
 
-9. usdc_send({ to: 'alice.eth', amount: '50' })
+9. eth_sendStablecoin({ token: 'USDC', to: 'alice.eth', amount: '50' })
    → "Sent 50 USDC to alice.eth on Scroll. TX: 0x..."
 ```
 
@@ -696,11 +696,11 @@ Agent workflow:
 User: "Send 100 USDC to bob.eth"
 
 Agent workflow:
-1. stablecoin_balances({})
+1. eth_getStablecoinBalances({})
    → Check balance: "USDC: 500.00"
    → Sufficient funds ✓
 
-2. usdc_send({ to: 'bob.eth', amount: '100' })
+2. eth_sendStablecoin({ token: 'USDC', to: 'bob.eth', amount: '100' })
    → "Sent 100 USDC to bob.eth. TX: 0xabc..."
 ```
 
@@ -710,7 +710,7 @@ Agent workflow:
 User: "Can I send 1000 USDC to merchant.eth?"
 
 Agent workflow:
-1. usdc_balance({})
+1. eth_getStablecoinBalance({ token: 'USDC' })
    → "USDC Balance: 500.00"
 
 2. Agent response: "You only have 500 USDC. Would you like to send 500 USDC instead?"
@@ -787,17 +787,17 @@ function getToolsForNetwork(network: string) {
 **Pattern: Check before send**
 ```typescript
 // Always check balance before attempting to send
-const balance = await executeTool(tools, 'usdc_balance', {});
+const balance = await executeTool(tools, 'eth_getStablecoinBalance', { token: 'USDC' });
 if (parseFloat(balance.data.formatted) < amount) {
   return "Insufficient USDC balance";
 }
-await executeTool(tools, 'usdc_send', { to, amount });
+await executeTool(tools, 'eth_sendStablecoin', { token: 'USDC', to, amount });
 ```
 
 **Pattern: Preview before bridge**
 ```typescript
 // Always preview bridges to show fees and timing
-const preview = await executeTool(tools, 'usdc_bridge_preview', { destinationChain, amount });
+const preview = await executeTool(tools, 'eth_previewBridge', { token: 'USDC', destinationChainId, amount });
 if (!preview.data.canBridge) {
   return `Cannot bridge: ${preview.data.blockers.join(', ')}`;
 }
@@ -807,10 +807,10 @@ if (!preview.data.canBridge) {
 **Pattern: Poll bridge status**
 ```typescript
 // Bridge operations are async - poll for completion
-let status = await executeTool(tools, 'usdc_bridge_status', { messageHash });
+let status = await executeTool(tools, 'eth_getBridgeStatus', { trackingId });
 while (status.data.status === 'pending') {
   await sleep(60000); // Wait 1 minute
-  status = await executeTool(tools, 'usdc_bridge_status', { messageHash });
+  status = await executeTool(tools, 'eth_getBridgeStatus', { trackingId });
 }
 ```
 
