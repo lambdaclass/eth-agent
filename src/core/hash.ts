@@ -4,8 +4,8 @@
  */
 
 import { keccak_256 } from '@noble/hashes/sha3';
-import { sha256 as nobleSha256 } from '@noble/hashes/sha256';
-import { ripemd160 as nobleRipemd160 } from '@noble/hashes/ripemd160';
+import { sha256 as nobleSha256 } from '@noble/hashes/sha2';
+import { ripemd160 as nobleRipemd160 } from '@noble/hashes/legacy';
 import type { Hash, Hex } from './types.js';
 import { bytesToHex, hexToBytes, isHex, stringToHex } from './hex.js';
 

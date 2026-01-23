@@ -5,7 +5,7 @@
 
 import * as secp256k1 from '@noble/secp256k1';
 import { hmac } from '@noble/hashes/hmac';
-import { sha256 } from '@noble/hashes/sha256';
+import { sha256 } from '@noble/hashes/sha2';
 import type { Address, Hash, Hex, Signature } from './types.js';
 import { bytesToHex, hexToBytes, padHex, concatHex } from './hex.js';
 import { keccak256 } from './hash.js';
