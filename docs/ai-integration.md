@@ -6,20 +6,31 @@ eth-agent provides first-class integrations with major AI frameworks, transformi
 
 Each integration exposes the same core operations:
 
+### Read Operations
 | Tool | Description |
 |------|-------------|
-| `get_balance` | Check ETH balance for any address |
-| `send_transaction` | Send ETH with safety limits |
-| `preview_transaction` | Simulate before executing |
-| `get_token_balance` | Check ERC-20 token balance |
-| `transfer_token` | Transfer ERC-20 tokens |
-| `bridge_usdc` | Bridge USDC to another chain |
-| `preview_bridge` | Preview a bridge operation |
-| `get_bridge_status` | Check bridge transaction status |
-| `get_capabilities` | Get wallet info and limits |
-| `eth_swap` | Swap tokens using Uniswap V3 |
+| `eth_getBalance` | Check ETH balance for any address |
+| `eth_getTokenBalance` | Check ERC-20 token balance |
+| `eth_getLimits` | Get current spending limits and usage |
+| `eth_getCapabilities` | Get wallet info and configuration |
+| `eth_preview` | Simulate transaction before executing |
+| `eth_getStablecoinBalance` | Check balance of a specific stablecoin |
+| `eth_getStablecoinBalances` | Get all stablecoin balances |
 | `eth_getSwapQuote` | Get a quote before swapping |
 | `eth_getSwapLimits` | Check swap limits and remaining allowance |
+| `eth_previewBridge` | Preview bridge with validation |
+| `eth_compareBridgeRoutes` | Compare available bridge routes |
+| `eth_getBridgeStatus` | Check bridge status by tracking ID |
+| `eth_getBridgeLimits` | Check bridge limits and allowed chains |
+
+### Write Operations
+| Tool | Description |
+|------|-------------|
+| `eth_send` | Send ETH with safety limits |
+| `eth_transferToken` | Transfer ERC-20 tokens |
+| `eth_sendStablecoin` | Send stablecoins (USDC, USDT, DAI, etc.) |
+| `eth_swap` | Swap tokens using Uniswap V3 |
+| `eth_bridge` | Bridge stablecoins to another chain |
 
 Safety limits apply regardless of which framework invokes the tools.
 
@@ -362,6 +373,176 @@ AI: [calls eth_swap({ fromToken: 'USDC', toToken: 'ETH', amount: '250', slippage
     Transaction: 0xabc...
 ```
 
+## Stablecoin Tools
+
+The stablecoin tools provide first-class support for USDC, USDT, DAI, and other major stablecoins with human-readable amounts.
+
+### eth_sendStablecoin
+
+Send stablecoins to any address:
+
+```typescript
+// Tool call from AI
+{
+  name: 'eth_sendStablecoin',
+  input: {
+    token: 'USDC',           // USDC, USDT, USDS, DAI, PYUSD, FRAX
+    to: 'alice.eth',         // Address or ENS name
+    amount: '100'            // Human-readable (no decimals needed)
+  }
+}
+
+// Response
+{
+  success: true,
+  data: {
+    hash: '0xabc...',
+    summary: 'Sent 100 USDC to alice.eth. TX: 0xabc...'
+  }
+}
+```
+
+### eth_getStablecoinBalance / eth_getStablecoinBalances
+
+Check stablecoin balances:
+
+```typescript
+// Get single stablecoin balance
+{ name: 'eth_getStablecoinBalance', input: { token: 'USDC' } }
+// → { success: true, summary: 'Balance: 1,234.56 USDC' }
+
+// Get all stablecoin balances
+{ name: 'eth_getStablecoinBalances', input: {} }
+// → { success: true, summary: '1,234.56 USDC, 500 USDT' }
+```
+
+## Bridge Tools
+
+Bridge stablecoins between chains with automatic route selection.
+
+### eth_bridge
+
+Bridge tokens to another chain:
+
+```typescript
+// Tool call from AI
+{
+  name: 'eth_bridge',
+  input: {
+    token: 'USDC',
+    amount: '100',
+    destinationChainId: 42161,  // Arbitrum
+    priority: 'cost'            // or 'speed'
+  }
+}
+
+// Response
+{
+  success: true,
+  data: {
+    trackingId: 'CCTP_11155111_84532_0xabc...',
+    protocol: 'CCTP',
+    sourceTxHash: '0xabc...',
+    estimatedTime: '15-20 minutes',
+    fee: { totalUSD: 0 }
+  },
+  summary: 'Bridging 100 USDC to Arbitrum via CCTP. Tracking ID: CCTP_...'
+}
+```
+
+### Supported Chains
+
+| Chain | Chain ID | Testnet ID |
+|-------|----------|------------|
+| Ethereum | 1 | 11155111 (Sepolia) |
+| Arbitrum | 42161 | 421614 |
+| Optimism | 10 | 11155420 |
+| Base | 8453 | 84532 |
+| Polygon | 137 | 80002 |
+| Avalanche | 43114 | 43113 |
+
+### eth_previewBridge
+
+Preview before bridging:
+
+```typescript
+// Tool call
+{
+  name: 'eth_previewBridge',
+  input: {
+    token: 'USDC',
+    amount: '1000',
+    destinationChainId: 8453  // Base
+  }
+}
+
+// Response
+{
+  success: true,
+  summary: 'Can bridge 1000 USDC to Base. Protocol: CCTP, Fee: $0.00, Time: 15-20 minutes'
+}
+```
+
+### eth_compareBridgeRoutes
+
+Compare available bridging protocols:
+
+```typescript
+// Tool call
+{
+  name: 'eth_compareBridgeRoutes',
+  input: { token: 'USDC', amount: '1000', destinationChainId: 42161 }
+}
+
+// Response
+{
+  success: true,
+  summary: 'Recommended: CCTP. Options: CCTP: $0.00 fee, 15-20 min; Stargate: $0.60 fee, 5-10 min'
+}
+```
+
+### eth_getBridgeStatus
+
+Track bridge progress using the tracking ID:
+
+```typescript
+// Tool call
+{
+  name: 'eth_getBridgeStatus',
+  input: { trackingId: 'CCTP_11155111_84532_0xabc...' }
+}
+
+// Response
+{
+  success: true,
+  summary: 'Bridge attestation_pending: Waiting for Circle attestation (50% complete)'
+}
+```
+
+### Example AI Conversation with Bridging
+
+```
+User: "I need to move 500 USDC from Ethereum to Arbitrum"
+
+AI: Let me first check your USDC balance and preview the bridge.
+    [calls eth_getStablecoinBalance({ token: 'USDC' })]
+    [calls eth_previewBridge({ token: 'USDC', amount: '500', destinationChainId: 42161 })]
+
+    You have 1,234.56 USDC. I can bridge 500 USDC to Arbitrum via CCTP
+    with no protocol fees (just gas). Estimated time: 15-20 minutes.
+    Would you like me to proceed?
+
+User: "Yes, please"
+
+AI: [calls eth_bridge({ token: 'USDC', amount: '500', destinationChainId: 42161 })]
+
+    Bridge initiated! Your 500 USDC is being sent to Arbitrum.
+    Tracking ID: CCTP_1_42161_0xdef...
+
+    You can check the status anytime with the tracking ID.
+    The bridge typically completes in 15-20 minutes.
+```
+
 ## Building Custom Tools
 
 Create domain-specific tools that extend the built-in capabilities:
@@ -416,20 +597,24 @@ function createAdvancedDeFiTools(wallet: AgentWallet) {
 
 2. **Always require approval for new recipients**: LLM hallucinations can produce plausible-looking addresses.
 
-3. **Use preview before send**: Have the LLM call `preview_transaction` before `send_transaction` for high-value operations.
+3. **Use preview before send**: Have the LLM call `eth_preview` before `eth_send` for high-value operations.
 
 4. **Get quotes before swapping**: Instruct the AI to call `eth_getSwapQuote` before `eth_swap` for any significant swap amount.
 
-5. **Use token allowlists for swaps**: Restrict which tokens the AI can swap to prevent trading in unknown or scam tokens.
+5. **Preview bridges before executing**: Use `eth_previewBridge` or `eth_compareBridgeRoutes` before `eth_bridge` to validate the operation and show the user expected fees/times.
 
-6. **Log all operations**: Enable logging for audit trails.
+6. **Use token allowlists for swaps**: Restrict which tokens the AI can swap to prevent trading in unknown or scam tokens.
 
-7. **Test with testnets**: Use Sepolia or Goerli before mainnet.
+7. **Configure bridge destination allowlists**: Restrict which chains the AI can bridge to for additional safety.
+
+8. **Log all operations**: Enable logging for audit trails.
+
+9. **Test with testnets**: Use Sepolia, Base Sepolia, or other testnets before mainnet.
 
 ```typescript
 const wallet = AgentWallet.create({
   privateKey: KEY,
-  network: 'sepolia',  // Use testnet
+  rpcUrl: 'https://sepolia.rpc.url',  // Use testnet
   ...SafetyPresets.CONSERVATIVE,
   limits: {
     ...SafetyPresets.CONSERVATIVE.limits,
@@ -438,7 +623,12 @@ const wallet = AgentWallet.create({
       perDayUSD: 5000,
       maxSlippagePercent: 1,
       maxPriceImpactPercent: 5,
-      allowedTokens: ['ETH', 'USDC', 'USDT', 'WETH'],  // Restrict to known tokens
+      allowedTokens: ['ETH', 'USDC', 'USDT', 'WETH'],
+    },
+    bridge: {
+      perTransactionUSD: 1000,
+      perDayUSD: 5000,
+      allowedDestinations: [42161, 8453, 10],  // Arbitrum, Base, Optimism only
     },
   },
 });

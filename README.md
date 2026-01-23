@@ -53,6 +53,7 @@ await wallet.sendUSDC({ to: 'merchant.eth', amount: '100' });
 |---------|-----------|-----------------|
 | Stablecoin transfers | One line | 15+ lines |
 | Token swaps (Uniswap) | One line | 50+ lines |
+| Cross-chain bridging | One line | 100+ lines |
 | Spending limits | Built-in | Manual |
 | Human approval | Built-in | Manual |
 | ENS resolution | Automatic | Manual |
@@ -176,25 +177,73 @@ const wallet = AgentWallet.create({
 
 ## Bridging
 
-Bridge USDC across chains using Circle's CCTP (Cross-Chain Transfer Protocol):
+Bridge stablecoins across chains with automatic route selection:
 
 ```typescript
-// Bridge 100 USDC from Ethereum to Base
-const result = await wallet.bridgeUSDC({
+import { USDC } from '@lambdaclass/eth-agent';
+
+// Bridge 100 USDC from Ethereum to Arbitrum - auto-selects best route
+const result = await wallet.bridge({
+  token: USDC,
   amount: '100',
+  destinationChainId: 42161,  // Arbitrum
+});
+
+console.log(result.trackingId);   // Unified tracking ID
+console.log(result.protocol);     // 'CCTP' | 'Stargate' | 'Across'
+console.log(result.summary);      // "Bridging 100 USDC to Arbitrum via CCTP"
+
+// Check status using tracking ID
+const status = await wallet.getBridgeStatusByTrackingId(result.trackingId);
+console.log(`${status.message} (${status.progress}%)`);
+```
+
+### Route Selection
+
+Compare routes or let the router choose:
+
+```typescript
+// Compare available routes before bridging
+const routes = await wallet.compareBridgeRoutes({
+  token: USDC,
+  amount: '1000',
   destinationChainId: 8453,  // Base
 });
 
-console.log(result.burnTxHash);    // TX on source chain
-console.log(result.messageHash);   // Track with this hash
+for (const quote of routes.quotes) {
+  console.log(`${quote.protocol}: $${quote.fee.totalUSD} fee, ${quote.estimatedTime.display}`);
+}
+console.log(`Recommended: ${routes.recommended.protocol}`);
 
-// Wait for Circle attestation (10-30 min on mainnet)
-const attestation = await wallet.waitForBridgeAttestation(result.messageHash);
+// Preview with full validation
+const preview = await wallet.previewBridgeWithRouter({
+  token: USDC,
+  amount: '1000',
+  destinationChainId: 8453,
+});
 
-// Check status anytime
-const status = await wallet.getBridgeStatus(result.messageHash);
-console.log(status.status);  // 'pending_burn' | 'attestation_pending' | 'completed' | ...
+if (preview.canBridge) {
+  console.log(`Ready to bridge. Fee: $${preview.quote.fee.totalUSD}`);
+} else {
+  console.log('Cannot bridge:', preview.blockers.join(', '));
+}
+
+// Prefer speed over cost
+const fast = await wallet.bridge({
+  token: USDC,
+  amount: '500',
+  destinationChainId: 8453,
+  preference: { priority: 'speed' },
+});
 ```
+
+### Supported Protocols
+
+| Protocol | Tokens | Speed | Fees | Notes |
+|----------|--------|-------|------|-------|
+| CCTP (Circle) | USDC | 10-20 min | $0 | Native burn/mint, no slippage |
+| Stargate | USDC, USDT | 5-15 min | ~0.06% | Liquidity pools |
+| Across | USDC, USDT | 2-5 min | Variable | Optimistic bridging |
 
 ### Supported Chains
 
@@ -207,7 +256,20 @@ console.log(status.status);  // 'pending_burn' | 'attestation_pending' | 'comple
 | Polygon | 137 | Amoy (80002) |
 | Avalanche | 43114 | Fuji (43113) |
 
-**Note:** Only USDC is supported for bridging. Transfers are 1:1 with no protocol fees (only gas costs).
+### Bridge Limits
+
+```typescript
+const wallet = AgentWallet.create({
+  privateKey: KEY,
+  limits: {
+    bridge: {
+      perTransactionUSD: 1000,
+      perDayUSD: 5000,
+      allowedDestinations: [42161, 8453, 10],  // Arbitrum, Base, Optimism only
+    },
+  },
+});
+```
 ## Safety
 
 Spending limits prevent your agent from draining a wallet:
@@ -293,12 +355,23 @@ if (!preview.canExecute) console.log(preview.blockers);
 
 ## AI Integrations
 
-Ready-to-use tool definitions for AI frameworks:
+Ready-to-use tool definitions for AI frameworks with 18 tools covering transfers, swaps, and bridging:
 
 ```typescript
+import { AgentWallet, anthropicTools } from '@lambdaclass/eth-agent';
+
+const wallet = AgentWallet.create({
+  privateKey: process.env.ETH_PRIVATE_KEY,
+  rpcUrl: 'https://eth.llamarpc.com',
+});
+
 // Anthropic Claude
 const tools = anthropicTools(wallet);
-await client.messages.create({ tools: tools.definitions, ... });
+await client.messages.create({
+  model: 'claude-sonnet-4-20250514',
+  tools: tools.definitions,
+  messages: [{ role: 'user', content: 'Send 100 USDC to alice.eth' }],
+});
 
 // OpenAI
 const tools = openaiTools(wallet);
@@ -307,6 +380,18 @@ await client.chat.completions.create({ tools: tools.definitions, ... });
 // MCP (Claude Desktop)
 createMCPServer({ wallet }).listen();
 ```
+
+### Available Tools
+
+| Category | Tools |
+|----------|-------|
+| **Transfers** | `eth_send`, `eth_sendStablecoin`, `eth_transferToken`, `eth_preview` |
+| **Balances** | `eth_getBalance`, `eth_getTokenBalance`, `eth_getStablecoinBalance`, `eth_getStablecoinBalances` |
+| **Swaps** | `eth_swap`, `eth_getSwapQuote`, `eth_getSwapLimits` |
+| **Bridging** | `eth_bridge`, `eth_previewBridge`, `eth_compareBridgeRoutes`, `eth_getBridgeStatus`, `eth_getBridgeLimits` |
+| **Info** | `eth_getLimits`, `eth_getCapabilities` |
+
+All tools return structured responses with `success`, `data`, and `summary` fields for easy LLM consumption.
 
 ## Smart Accounts (ERC-4337)
 
@@ -331,7 +416,8 @@ eth-agent/
 ├── stablecoins/    # USDC, USDT, USDS, DAI, PYUSD, FRAX definitions
 ├── tokens/         # General token registry (WETH, UNI, LINK, etc.)
 ├── protocol/       # Ethereum (rpc, tx, ens, erc-4337, contracts, uniswap)
-├── agent/          # Safety (wallet, limits, approval, errors, swaps)
+├── bridge/         # Cross-chain (CCTP, Stargate, Across, router, tracking)
+├── agent/          # Safety (wallet, limits, approval, errors)
 └── integrations/   # AI frameworks (anthropic, openai, langchain, mcp)
 ```
 

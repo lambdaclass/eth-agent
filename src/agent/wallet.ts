@@ -64,6 +64,12 @@ import {
   type BridgeInitResult,
   type BridgeStatusResult,
   type BridgePreviewResult,
+  BridgeRouter,
+  type BridgeRouteComparison,
+  type BridgePreview,
+  type UnifiedBridgeResult,
+  type UnifiedBridgeStatus,
+  type RoutePreference,
 } from '../bridge/index.js';
 
 export interface AgentWalletConfig {
@@ -257,6 +263,35 @@ export interface BridgeUSDCResult extends BridgeInitResult {
   };
 }
 
+/**
+ * Options for the unified bridge method
+ */
+export interface BridgeOptions {
+  /** The stablecoin to bridge */
+  token: StablecoinInfo;
+  /** Amount in human-readable format (e.g., "100" means 100 USDC) */
+  amount: string | number;
+  /** Destination chain ID */
+  destinationChainId: number;
+  /** Recipient address on destination chain (defaults to sender) */
+  recipient?: string;
+  /** Route selection preferences */
+  preference?: RoutePreference;
+  /** Specific protocol to use (bypasses auto-selection) */
+  protocol?: string;
+}
+
+/**
+ * Extended bridge result with wallet-specific info
+ */
+export interface BridgeResult extends UnifiedBridgeResult {
+  limits: {
+    remaining: {
+      daily: string;
+    };
+  };
+}
+
 
 /**
  * AgentWallet - Safe Ethereum operations for AI agents
@@ -276,6 +311,7 @@ export class AgentWallet {
   private readonly agentId: string;
   private uniswapClient: UniswapClient | null = null;
   private cachedBridge?: CCTPBridge;
+  private cachedBridgeRouter?: BridgeRouter;
   private cachedChainId?: number;
 
   // ETH price cache for USD value estimation
@@ -1070,6 +1106,268 @@ export class AgentWallet {
    */
   getBridgeHistory(options?: { hours?: number; limit?: number }): ReturnType<LimitsEngine['getBridgeHistory']> {
     return this.limits.getBridgeHistory(options);
+  }
+
+  // ============ Unified Bridge Methods (Router-based) ============
+
+  /**
+   * Get or create a cached BridgeRouter instance
+   */
+  private async getBridgeRouter(): Promise<BridgeRouter> {
+    if (!this.cachedBridgeRouter) {
+      this.cachedBridgeRouter = new BridgeRouter({
+        sourceRpc: this.rpc,
+        account: this.account,
+        limitsEngine: this.limits,
+      });
+    }
+    return this.cachedBridgeRouter;
+  }
+
+  /**
+   * Bridge tokens using auto-selected best route
+   *
+   * This is the primary bridge method that automatically selects the best
+   * bridge protocol based on your preferences (cost, speed, or reliability).
+   *
+   * @example
+   * ```typescript
+   * // Simple one-liner - auto-selects best bridge
+   * const result = await wallet.bridge({
+   *   token: USDC,
+   *   amount: '100',
+   *   destinationChainId: 42161,  // Arbitrum
+   * });
+   *
+   * // Prefer speed over cost
+   * const fast = await wallet.bridge({
+   *   token: USDC,
+   *   amount: '100',
+   *   destinationChainId: 42161,
+   *   preference: { priority: 'speed' },
+   * });
+   *
+   * // Use specific protocol
+   * const via = await wallet.bridge({
+   *   token: USDC,
+   *   amount: '500',
+   *   destinationChainId: 10,
+   *   protocol: 'CCTP',
+   * });
+   * ```
+   */
+  async bridge(options: BridgeOptions): Promise<BridgeResult> {
+    const router = await this.getBridgeRouter();
+
+    // Resolve recipient if provided
+    let recipient: Address | undefined;
+    if (options.recipient) {
+      recipient = await this.resolveAddress(options.recipient);
+
+      // Check if blocked
+      const blocked = this.blockedAddresses.get(recipient.toLowerCase());
+      if (blocked) {
+        throw new BlockedAddressError(recipient, blocked);
+      }
+    }
+
+    // Build bridge request
+    const request = {
+      token: options.token,
+      amount: options.amount,
+      destinationChainId: options.destinationChainId,
+      recipient,
+    };
+
+    // Execute bridge via router
+    let result: UnifiedBridgeResult;
+    if (options.protocol) {
+      // Use specific protocol if specified
+      result = await router.bridgeVia(options.protocol, request);
+    } else {
+      // Auto-select best route based on preference
+      result = await router.bridge(request, options.preference ?? { priority: 'cost' });
+    }
+
+    // Get updated limit status
+    const bridgeStatus = this.limits.getBridgeStatus();
+
+    return {
+      ...result,
+      limits: {
+        remaining: {
+          daily: bridgeStatus.daily.remaining,
+        },
+      },
+    };
+  }
+
+  /**
+   * Safe version of bridge that returns a Result instead of throwing
+   *
+   * @example
+   * ```typescript
+   * const result = await wallet.safeBridge({
+   *   token: USDC,
+   *   amount: '100',
+   *   destinationChainId: 42161,
+   * });
+   *
+   * if (!result.success) {
+   *   console.log('Bridge failed:', result.error.message);
+   *   console.log('Recovery steps:', result.error.recovery?.nextSteps);
+   * }
+   * ```
+   */
+  async safeBridge(
+    options: BridgeOptions
+  ): Promise<Result<BridgeResult, EthAgentError>> {
+    try {
+      const result = await this.bridge(options);
+      return ok(result);
+    } catch (error) {
+      if (error instanceof EthAgentError) {
+        return err(error);
+      }
+      return err(new EthAgentError({
+        code: 'UNKNOWN_ERROR',
+        message: (error as Error).message,
+        suggestion: 'Failed to execute bridge',
+      }));
+    }
+  }
+
+  /**
+   * Compare available bridge routes before committing
+   *
+   * Returns quotes from all available protocols with a recommended choice.
+   * Use this to preview options and show users the trade-offs.
+   *
+   * @example
+   * ```typescript
+   * const routes = await wallet.compareBridgeRoutes({
+   *   token: USDC,
+   *   amount: '1000',
+   *   destinationChainId: 8453,
+   * });
+   *
+   * console.log(routes.recommendation.reason); // "CCTP: lowest fees ($0)"
+   *
+   * for (const quote of routes.quotes) {
+   *   console.log(`${quote.protocol}: $${quote.fee.totalUSD} fee, ${quote.estimatedTime.display}`);
+   * }
+   * ```
+   */
+  async compareBridgeRoutes(options: {
+    token: StablecoinInfo;
+    amount: string | number;
+    destinationChainId: number;
+    preference?: RoutePreference;
+  }): Promise<BridgeRouteComparison> {
+    const router = await this.getBridgeRouter();
+
+    return router.findRoutes(
+      {
+        token: options.token,
+        amount: options.amount,
+        destinationChainId: options.destinationChainId,
+      },
+      options.preference ?? { priority: 'cost' }
+    );
+  }
+
+  /**
+   * Preview a bridge operation with full validation
+   *
+   * Checks balance, limits, route availability, and returns gas estimates.
+   * Use this before executing to ensure the bridge will succeed.
+   *
+   * @example
+   * ```typescript
+   * const preview = await wallet.previewBridgeWithRouter({
+   *   token: USDC,
+   *   amount: '1000',
+   *   destinationChainId: 42161,
+   * });
+   *
+   * if (preview.canBridge) {
+   *   console.log(`Ready to bridge. Gas cost: $${preview.quote?.fee.totalUSD}`);
+   * } else {
+   *   console.log('Cannot bridge:', preview.blockers.join(', '));
+   * }
+   * ```
+   */
+  async previewBridgeWithRouter(options: {
+    token: StablecoinInfo;
+    amount: string | number;
+    destinationChainId: number;
+    preference?: RoutePreference;
+  }): Promise<BridgePreview> {
+    const router = await this.getBridgeRouter();
+
+    return router.previewBridge(
+      {
+        token: options.token,
+        amount: options.amount,
+        destinationChainId: options.destinationChainId,
+      },
+      options.preference ?? { priority: 'cost' }
+    );
+  }
+
+  /**
+   * Get bridge status using tracking ID
+   *
+   * The tracking ID is returned from bridge() and encodes all the information
+   * needed to check status without knowing which protocol was used.
+   *
+   * @example
+   * ```typescript
+   * const result = await wallet.bridge({ ... });
+   * // ... later ...
+   * const status = await wallet.getBridgeStatusByTrackingId(result.trackingId);
+   * console.log(`Progress: ${status.progress}%`);
+   * console.log(`Status: ${status.message}`);
+   * ```
+   */
+  async getBridgeStatusByTrackingId(trackingId: string): Promise<UnifiedBridgeStatus> {
+    const router = await this.getBridgeRouter();
+    return router.getStatusByTrackingId(trackingId);
+  }
+
+  /**
+   * Wait for bridge completion using tracking ID
+   *
+   * @example
+   * ```typescript
+   * const result = await wallet.bridge({ ... });
+   * const attestation = await wallet.waitForBridgeByTrackingId(result.trackingId);
+   * console.log('Bridge completed! Attestation:', attestation);
+   * ```
+   */
+  async waitForBridgeByTrackingId(
+    trackingId: string,
+    options?: { timeout?: number; onProgress?: (status: { progress: number; message: string }) => void }
+  ): Promise<Hex> {
+    const router = await this.getBridgeRouter();
+    return router.waitForCompletionByTrackingId(trackingId, options);
+  }
+
+  /**
+   * Get minimum bridge amount for a token
+   */
+  getMinBridgeAmount(token: StablecoinInfo): {
+    raw: bigint;
+    formatted: string;
+    usd: number;
+  } {
+    // Use a temporary router to get the min amount
+    // In practice, we might want to cache this
+    const router = new BridgeRouter({
+      sourceRpc: this.rpc,
+      account: this.account,
+    });
+    return router.getMinBridgeAmount(token);
   }
 
   /**

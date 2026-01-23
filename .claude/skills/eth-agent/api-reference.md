@@ -121,6 +121,57 @@ wallet.waitForPayment(options?: {
 }): Promise<IncomingPayment>
 ```
 
+#### Bridge Operations
+
+```typescript
+// Bridge tokens with auto-selected route
+wallet.bridge(options: {
+  token: StablecoinInfo;
+  amount: string;
+  destinationChainId: number;
+  recipient?: string;
+  preference?: RoutePreference;
+  protocol?: string;  // Force specific protocol
+}): Promise<BridgeResult>
+
+// Safe version - returns Result instead of throwing
+wallet.safeBridge(options: BridgeOptions): Promise<Result<BridgeResult>>
+
+// Compare available routes before bridging
+wallet.compareBridgeRoutes(options: {
+  token: StablecoinInfo;
+  amount: string;
+  destinationChainId: number;
+  preference?: RoutePreference;
+}): Promise<BridgeRouteComparison>
+
+// Preview bridge with full validation
+wallet.previewBridgeWithRouter(options: {
+  token: StablecoinInfo;
+  amount: string;
+  destinationChainId: number;
+  preference?: RoutePreference;
+}): Promise<BridgePreview>
+
+// Get status using unified tracking ID
+wallet.getBridgeStatusByTrackingId(trackingId: string): Promise<UnifiedBridgeStatus>
+
+// Wait for bridge completion
+wallet.waitForBridgeByTrackingId(trackingId: string): Promise<Hex>
+
+// Get minimum bridge amount for a token
+wallet.getMinBridgeAmount(token: StablecoinInfo): { raw: bigint; formatted: string; usd: number }
+
+// Legacy direct CCTP methods
+wallet.bridgeUSDC(options: { amount: string; destinationChainId: number; recipient?: string }): Promise<BridgeUSDCResult>
+wallet.safeBridgeUSDC(options): Promise<Result<BridgeUSDCResult>>
+wallet.previewBridgeUSDC(options): Promise<BridgePreviewResult>
+wallet.getBridgeStatus(messageHash: Hex): Promise<BridgeStatusResult>
+wallet.waitForBridgeAttestation(messageHash: Hex): Promise<Hex>
+wallet.getBridgeLimits(): BridgeLimitsStatus
+wallet.getBridgeHistory(options?: { hours?: number; limit?: number }): BridgeHistoryEntry[]
+```
+
 ## SmartAgentWallet
 
 Extends AgentWallet with ERC-4337 smart account capabilities.
@@ -360,4 +411,114 @@ const paymaster = createVerifyingPaymaster({
   address: Address;         // Paymaster contract address
   signer: Signer;           // Signer for paymaster signature
 });
+```
+
+## Bridge Types
+
+### RoutePreference
+
+```typescript
+interface RoutePreference {
+  priority: 'speed' | 'cost' | 'reliability';
+  maxFeeUSD?: number;           // Maximum total fee
+  maxTimeMinutes?: number;      // Maximum bridge time
+  maxSlippageBps?: number;      // e.g., 50 = 0.5% max slippage
+  preferredProtocols?: string[];
+  excludeProtocols?: string[];
+}
+```
+
+### BridgeQuote
+
+```typescript
+interface BridgeQuote {
+  protocol: string;
+  inputAmount: bigint;
+  outputAmount: bigint;       // After fees and slippage
+  fee: {
+    protocol: bigint;
+    gas: bigint;
+    total: bigint;
+    totalUSD: number;
+  };
+  slippage?: {
+    expectedBps: number;
+    maxBps: number;
+  };
+  estimatedTime: { minSeconds: number; maxSeconds: number; display: string };
+  route: {
+    sourceChainId: number;
+    destinationChainId: number;
+    token: string;
+    steps: number;
+    description: string;
+  };
+  expiry: Date;
+}
+```
+
+### BridgeResult
+
+```typescript
+interface BridgeResult {
+  success: boolean;
+  protocol: string;
+  trackingId: string;           // Unified tracking ID
+  sourceTxHash: Hash;
+  amount: { raw: bigint; formatted: string };
+  fee: { raw: bigint; formatted: string; usd: number };
+  sourceChain: { id: number; name: string };
+  destinationChain: { id: number; name: string };
+  recipient: Address;
+  estimatedTime: { minSeconds: number; maxSeconds: number; display: string };
+  summary: string;              // Human-readable summary
+  remainingLimits?: {
+    perTransaction: bigint;
+    daily: bigint;
+  };
+}
+```
+
+### UnifiedBridgeStatus
+
+```typescript
+interface UnifiedBridgeStatus {
+  trackingId: string;
+  protocol: string;
+  status: BridgeStatus;         // 'pending_burn' | 'burn_confirmed' | 'attestation_pending' | etc.
+  sourceTxHash: Hash;
+  amount: { raw: bigint; formatted: string };
+  progress: number;             // 0-100
+  message: string;              // Human-readable status
+  updatedAt: Date;
+  error?: string;
+}
+```
+
+### BridgePreview
+
+```typescript
+interface BridgePreview {
+  canBridge: boolean;
+  blockers: string[];           // Reasons why can't bridge
+  quote: BridgeQuote | null;    // Recommended quote
+  allQuotes: BridgeQuote[];     // All available quotes
+  sourceChain: { id: number; name: string };
+  destinationChain: { id: number; name: string };
+  amount: { raw: bigint; formatted: string };
+  balance: { raw: bigint; formatted: string };
+  needsApproval: boolean;
+}
+```
+
+### Bridge Error Codes
+
+```typescript
+type BridgeErrorCode =
+  | 'BRIDGE_NO_ROUTE'               // No bridge supports this route
+  | 'BRIDGE_QUOTE_EXPIRED'          // Quote expired before execution
+  | 'BRIDGE_PROTOCOL_UNAVAILABLE'   // Protocol temporarily down
+  | 'BRIDGE_VALIDATION_FAILED'      // Request validation failed
+  | 'BRIDGE_INSUFFICIENT_LIQUIDITY' // Not enough liquidity
+  | 'BRIDGE_SLIPPAGE_EXCEEDED';     // Slippage exceeds max
 ```

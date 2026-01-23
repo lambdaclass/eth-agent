@@ -209,6 +209,13 @@ export interface BridgeQuote {
     /** Total fee in USD */
     totalUSD: number;
   };
+  /** Slippage information (for protocols with variable output) */
+  slippage?: {
+    /** Expected slippage in basis points */
+    expectedBps: number;
+    /** Maximum allowed slippage in basis points */
+    maxBps: number;
+  };
   /** Estimated time */
   estimatedTime: {
     /** Minimum time in seconds */
@@ -343,11 +350,20 @@ export interface UnifiedBridgeResult {
   /** Recipient address */
   recipient: Address;
   /** Estimated time to complete */
-  estimatedTime: string;
+  estimatedTime: {
+    minSeconds: number;
+    maxSeconds: number;
+    display: string;
+  };
   /** Human-readable summary */
   summary: string;
-  /** Protocol-specific data */
-  protocolData: Record<string, unknown>;
+  /** Protocol-specific data (CCTP: messageHash, messageBytes, nonce) */
+  protocolData: {
+    messageHash?: Hex;
+    messageBytes?: Hex;
+    nonce?: string;
+    [key: string]: unknown;
+  };
 }
 
 /**

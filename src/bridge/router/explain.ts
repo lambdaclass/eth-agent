@@ -98,7 +98,7 @@ export class ExplainBridge {
     lines.push(`Recipient: ${result.recipient}`);
     lines.push('');
     lines.push(`Fee: ${result.fee.formatted} (~$${result.fee.usd.toFixed(2)})`);
-    lines.push(`Estimated time: ${result.estimatedTime}`);
+    lines.push(`Estimated time: ${result.estimatedTime.display}`);
     lines.push('');
     lines.push(`Tracking ID: ${result.trackingId}`);
     lines.push(`Source TX: ${result.sourceTxHash}`);

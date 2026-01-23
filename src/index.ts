@@ -240,6 +240,9 @@ export {
   type SwapResult,
   type BridgeUSDCOptions,
   type BridgeUSDCResult,
+  // New bridge types
+  type BridgeOptions,
+  type BridgeResult,
 
   // Limits
   LimitsEngine,
