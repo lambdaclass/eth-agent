@@ -12,6 +12,10 @@ import {
   StablecoinLimitError,
 } from './errors.js';
 import {
+  BridgeLimitError,
+  BridgeDestinationNotAllowedError,
+} from '../bridge/errors.js';
+import {
   type StablecoinInfo,
   type StablecoinSymbol,
   STABLECOINS,
@@ -23,6 +27,15 @@ export interface StablecoinLimits {
   perTransaction?: string | number;  // '1000' or 1000 means 1000 of the token
   perHour?: string | number;
   perDay?: string | number;
+}
+
+export interface BridgeLimits {
+  /** Maximum per-transaction bridge amount in USD */
+  perTransactionUSD?: string | number;
+  /** Maximum daily bridging amount in USD */
+  perDayUSD?: string | number;
+  /** Allowed destination chain IDs (whitelist) */
+  allowedDestinations?: number[];
 }
 
 export interface SpendingLimits {
@@ -48,6 +61,9 @@ export interface SpendingLimits {
     // Per-token specific limits
     byToken?: Partial<Record<StablecoinSymbol, StablecoinLimits>>;
   };
+
+  // Bridge limits (cross-chain transfers)
+  bridge?: BridgeLimits;
 }
 
 interface SpendingRecord {
@@ -66,6 +82,20 @@ interface StablecoinLimitState {
   perTransaction: bigint;  // In normalized 6 decimals
   perHour: bigint;
   perDay: bigint;
+}
+
+interface BridgeLimitState {
+  perTransaction: bigint;  // In normalized 6 decimals (USD)
+  perDay: bigint;
+  allowedDestinations: number[];  // Empty array means all allowed
+}
+
+interface BridgeSpendingRecord {
+  token: string;
+  amount: bigint;
+  usdEquivalent: bigint;  // Normalized to 6 decimals
+  destinationChainId: number;
+  timestamp: number;
 }
 
 interface LimitState {
@@ -92,6 +122,10 @@ interface LimitState {
   };
   stablecoinHistory: StablecoinSpendingRecord[];
 
+  // Bridge limits and history
+  bridgeLimits: BridgeLimitState;
+  bridgeHistory: BridgeSpendingRecord[];
+
   // Emergency stop flag
   stopped: boolean;
   stopReason?: string;
@@ -102,7 +136,7 @@ const USD_DECIMALS = 6;
 const DEFAULT_USD_LIMIT = 10000n * 10n ** BigInt(USD_DECIMALS); // $10,000 default
 
 export class LimitsEngine {
-  private state: LimitState;
+  private readonly state: LimitState;
 
   constructor(limits: SpendingLimits = {}) {
     this.state = {
@@ -120,6 +154,8 @@ export class LimitsEngine {
       gasHistory: [],
       stablecoinLimits: this.parseStablecoinLimits(limits.stablecoin),
       stablecoinHistory: [],
+      bridgeLimits: this.parseBridgeLimits(limits.bridge),
+      bridgeHistory: [],
       stopped: false,
     };
   }
@@ -136,20 +172,29 @@ export class LimitsEngine {
 
     const byToken = new Map<StablecoinSymbol, StablecoinLimitState>();
 
-    if (config?.byToken) {
+    if (config?.byToken !== undefined) {
       for (const [symbol, tokenLimits] of Object.entries(config.byToken)) {
-        if (tokenLimits) {
-          const stablecoin = STABLECOINS[symbol as StablecoinSymbol];
-          byToken.set(symbol as StablecoinSymbol, {
-            perTransaction: this.parseTokenLimit(tokenLimits.perTransaction, stablecoin, global.perTransaction),
-            perHour: this.parseTokenLimit(tokenLimits.perHour, stablecoin, global.perHour),
-            perDay: this.parseTokenLimit(tokenLimits.perDay, stablecoin, global.perDay),
-          });
-        }
+        const stablecoin = STABLECOINS[symbol as StablecoinSymbol];
+        byToken.set(symbol as StablecoinSymbol, {
+          perTransaction: this.parseTokenLimit(tokenLimits.perTransaction, stablecoin, global.perTransaction),
+          perHour: this.parseTokenLimit(tokenLimits.perHour, stablecoin, global.perHour),
+          perDay: this.parseTokenLimit(tokenLimits.perDay, stablecoin, global.perDay),
+        });
       }
     }
 
     return { global, byToken };
+  }
+
+  /**
+   * Parse bridge limits configuration
+   */
+  private parseBridgeLimits(config?: BridgeLimits): BridgeLimitState {
+    return {
+      perTransaction: this.parseUSDLimit(config?.perTransactionUSD, 10000n * 10n ** BigInt(USD_DECIMALS)), // $10,000 default
+      perDay: this.parseUSDLimit(config?.perDayUSD, 50000n * 10n ** BigInt(USD_DECIMALS)), // $50,000 default
+      allowedDestinations: config?.allowedDestinations ?? [],
+    };
   }
 
   /**
@@ -252,7 +297,7 @@ export class LimitsEngine {
       const percentSpent = Number((dailySpent + amount) * 100n / currentBalance);
       if (percentSpent > this.state.emergencyStop.haltIfSpentPercent) {
         this.triggerEmergencyStop(
-          `Daily spending would exceed ${this.state.emergencyStop.haltIfSpentPercent}% of balance`
+          `Daily spending would exceed ${String(this.state.emergencyStop.haltIfSpentPercent)}% of balance`
         );
         throw new EmergencyStopError(this.state.stopReason ?? 'Spending limit exceeded');
       }
@@ -530,6 +575,171 @@ export class LimitsEngine {
   private cleanupStablecoinHistory(): void {
     const weekAgo = Date.now() - 7 * 24 * 60 * 60 * 1000;
     this.state.stablecoinHistory = this.state.stablecoinHistory.filter((r) => r.timestamp >= weekAgo);
+  }
+
+  // ============ Bridge Limit Methods ============
+
+  /**
+   * Check if a bridge transaction is within limits
+   * Throws BridgeLimitError or BridgeDestinationNotAllowedError if limits exceeded
+   */
+  checkBridgeTransaction(token: StablecoinInfo, amount: bigint, destChainId: number): void {
+    // Check emergency stop
+    if (this.state.stopped) {
+      throw new EmergencyStopError(this.state.stopReason ?? 'Wallet is stopped');
+    }
+
+    // Check allowed destinations
+    const { allowedDestinations } = this.state.bridgeLimits;
+    if (allowedDestinations.length > 0 && !allowedDestinations.includes(destChainId)) {
+      throw new BridgeDestinationNotAllowedError({
+        destinationChainId: destChainId,
+        allowedDestinations,
+      });
+    }
+
+    const usdEquivalent = this.normalizeToUSD(amount, token);
+    const formattedAmount = formatUnits(usdEquivalent, USD_DECIMALS);
+
+    // Check per-transaction limit
+    if (usdEquivalent > this.state.bridgeLimits.perTransaction) {
+      throw new BridgeLimitError({
+        type: 'transaction',
+        requested: formattedAmount,
+        limit: formatUnits(this.state.bridgeLimits.perTransaction, USD_DECIMALS),
+      });
+    }
+
+    // Check daily limit
+    const dailySpent = this.getBridgeSpentInWindow(24 * 60 * 60 * 1000);
+    const dailyRemaining = this.state.bridgeLimits.perDay - dailySpent;
+
+    if (usdEquivalent > dailyRemaining) {
+      const resetsAt = this.getBridgeWindowResetTime(24 * 60 * 60 * 1000);
+      throw new BridgeLimitError({
+        type: 'daily',
+        requested: formattedAmount,
+        limit: formatUnits(this.state.bridgeLimits.perDay, USD_DECIMALS),
+        remaining: formatUnits(dailyRemaining > 0n ? dailyRemaining : 0n, USD_DECIMALS),
+        resetsAt,
+      });
+    }
+  }
+
+  /**
+   * Record a successful bridge transaction
+   */
+  recordBridgeSpend(token: StablecoinInfo, amount: bigint, destChainId: number): void {
+    const now = Date.now();
+    const usdEquivalent = this.normalizeToUSD(amount, token);
+
+    this.state.bridgeHistory.push({
+      token: token.symbol,
+      amount,
+      usdEquivalent,
+      destinationChainId: destChainId,
+      timestamp: now,
+    });
+
+    // Clean up old history
+    this.cleanupBridgeHistory();
+  }
+
+  /**
+   * Get bridge spending status
+   */
+  getBridgeStatus(): {
+    perTransaction: { limit: string; available: string };
+    daily: { limit: string; used: string; remaining: string; resetsAt: Date };
+    allowedDestinations: number[];
+  } {
+    const dailySpent = this.getBridgeSpentInWindow(24 * 60 * 60 * 1000);
+
+    return {
+      perTransaction: {
+        limit: formatUnits(this.state.bridgeLimits.perTransaction, USD_DECIMALS),
+        available: formatUnits(this.state.bridgeLimits.perTransaction, USD_DECIMALS),
+      },
+      daily: {
+        limit: formatUnits(this.state.bridgeLimits.perDay, USD_DECIMALS),
+        used: formatUnits(dailySpent, USD_DECIMALS),
+        remaining: formatUnits(
+          this.state.bridgeLimits.perDay > dailySpent ? this.state.bridgeLimits.perDay - dailySpent : 0n,
+          USD_DECIMALS
+        ),
+        resetsAt: this.getBridgeWindowResetTime(24 * 60 * 60 * 1000),
+      },
+      allowedDestinations: this.state.bridgeLimits.allowedDestinations,
+    };
+  }
+
+  /**
+   * Get maximum bridge amount considering all limits
+   */
+  getMaxBridgeAmount(token: StablecoinInfo): bigint {
+    if (this.state.stopped) return 0n;
+
+    const dailyRemaining = this.state.bridgeLimits.perDay - this.getBridgeSpentInWindow(24 * 60 * 60 * 1000);
+
+    // Get minimum of per-transaction and daily remaining
+    let maxUSD = this.state.bridgeLimits.perTransaction;
+    if (dailyRemaining < maxUSD) maxUSD = dailyRemaining;
+
+    if (maxUSD <= 0n) return 0n;
+
+    // Convert back to token decimals
+    return this.denormalizeFromUSD(maxUSD, token);
+  }
+
+  private getBridgeSpentInWindow(windowMs: number): bigint {
+    const cutoff = Date.now() - windowMs;
+    return this.state.bridgeHistory
+      .filter((r) => r.timestamp >= cutoff)
+      .reduce((sum, r) => sum + r.usdEquivalent, 0n);
+  }
+
+  private getBridgeWindowResetTime(windowMs: number): Date {
+    const cutoff = Date.now() - windowMs;
+    const filtered = this.state.bridgeHistory
+      .filter((r) => r.timestamp >= cutoff)
+      .sort((a, b) => a.timestamp - b.timestamp);
+
+    const oldest = filtered[0];
+    if (oldest) {
+      return new Date(oldest.timestamp + windowMs);
+    }
+    return new Date();
+  }
+
+  private cleanupBridgeHistory(): void {
+    const weekAgo = Date.now() - 7 * 24 * 60 * 60 * 1000;
+    this.state.bridgeHistory = this.state.bridgeHistory.filter((r) => r.timestamp >= weekAgo);
+  }
+
+  /**
+   * Get recent bridge history
+   * Returns bridges from the last 24 hours by default
+   */
+  getBridgeHistory(options?: { hours?: number; limit?: number }): {
+    token: string;
+    amount: string;
+    destinationChainId: number;
+    timestamp: Date;
+  }[] {
+    const hours = options?.hours ?? 24;
+    const limit = options?.limit ?? 50;
+    const cutoff = Date.now() - hours * 60 * 60 * 1000;
+
+    return this.state.bridgeHistory
+      .filter((r) => r.timestamp >= cutoff)
+      .sort((a, b) => b.timestamp - a.timestamp)
+      .slice(0, limit)
+      .map((r) => ({
+        token: r.token,
+        amount: formatUnits(r.usdEquivalent, USD_DECIMALS),
+        destinationChainId: r.destinationChainId,
+        timestamp: new Date(r.timestamp),
+      }));
   }
 
   /**

@@ -15,11 +15,13 @@ export type {
   StablecoinBalances,
   SendStablecoinOptions,
   SendStablecoinResult,
+  BridgeUSDCOptions,
+  BridgeUSDCResult,
 } from './wallet.js';
 
 // Limits engine
 export { LimitsEngine } from './limits.js';
-export type { SpendingLimits, StablecoinLimits } from './limits.js';
+export type { SpendingLimits, StablecoinLimits, BridgeLimits } from './limits.js';
 
 // Simulation engine
 export { SimulationEngine, explainSimulation } from './simulation.js';

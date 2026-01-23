@@ -302,15 +302,15 @@ export class StablecoinLimitError extends LimitError {
     resetsAt?: Date;
   }) {
     const typeMessages = {
-      transaction: `${config.token} transaction amount ${config.requested} exceeds per-transaction limit of $${config.limit}`,
-      hourly: `${config.token} transaction would exceed hourly limit. Remaining: $${config.remaining}`,
-      daily: `${config.token} transaction would exceed daily limit. Remaining: $${config.remaining}`,
+      transaction: `${config.token} transaction amount ${config.requested} exceeds per-transaction limit of $${config.limit ?? 'unknown'}`,
+      hourly: `${config.token} transaction would exceed hourly limit. Remaining: $${config.remaining ?? '0'}`,
+      daily: `${config.token} transaction would exceed daily limit. Remaining: $${config.remaining ?? '0'}`,
     };
 
     const typeSuggestions = {
-      transaction: `Reduce amount to $${config.limit} or less`,
-      hourly: `Reduce amount to $${config.remaining} or wait until ${config.resetsAt?.toISOString() ?? 'limit resets'}`,
-      daily: `Reduce amount to $${config.remaining} or wait until ${config.resetsAt?.toISOString() ?? 'limit resets'}`,
+      transaction: `Reduce amount to $${config.limit ?? 'unknown'} or less`,
+      hourly: `Reduce amount to $${config.remaining ?? '0'} or wait until ${config.resetsAt?.toISOString() ?? 'limit resets'}`,
+      daily: `Reduce amount to $${config.remaining ?? '0'} or wait until ${config.resetsAt?.toISOString() ?? 'limit resets'}`,
     };
 
     super({
@@ -351,7 +351,7 @@ export class ApprovalTimeoutError extends ApprovalError {
   constructor(timeout: number) {
     super({
       code: 'APPROVAL_TIMEOUT',
-      message: `Approval request timed out after ${timeout}ms`,
+      message: `Approval request timed out after ${String(timeout)}ms`,
       details: { timeout },
       suggestion: 'Retry the transaction to request approval again',
       retryable: true,
@@ -431,3 +431,7 @@ export class EmergencyStopError extends EthAgentError {
     this.name = 'EmergencyStopError';
   }
 }
+
+// ============ Bridge Errors ============
+// NOTE: Bridge-specific errors are now in src/bridge/errors.ts
+// Import from there instead: import { BridgeLimitError, ... } from '../bridge/errors.js'

@@ -192,11 +192,14 @@ export {
   type StablecoinBalances,
   type SendStablecoinOptions,
   type SendStablecoinResult,
+  type BridgeUSDCOptions,
+  type BridgeUSDCResult,
 
   // Limits
   LimitsEngine,
   type SpendingLimits,
   type StablecoinLimits,
+  type BridgeLimits,
 
   // Simulation
   SimulationEngine,
@@ -259,6 +262,57 @@ export {
   OperationNotAllowedError,
   EmergencyStopError,
 } from './agent/index.js';
+
+// Bridge module
+export {
+  // Main bridge
+  CCTPBridge,
+  createCCTPBridge,
+  type CCTPBridgeConfig,
+
+  // Types
+  type BridgeRequest,
+  type BridgeInitResult,
+  type BridgeCompleteResult,
+  type BridgeStatus,
+  type BridgeStatusResult,
+  type BridgeProtocol,
+  type CCTPDomain,
+
+  // Constants
+  CCTP_CONTRACTS,
+  CIRCLE_ATTESTATION_API,
+  getCCTPConfig,
+  getSupportedCCTPChains,
+  isTestnet as isBridgeTestnet,
+  getChainName as getBridgeChainName,
+  type CCTPChainConfig,
+
+  // Attestation
+  AttestationClient,
+  createAttestationClient,
+  type AttestationClientConfig,
+  type AttestationResponse,
+  type AttestationStatus,
+
+  // Message decoding
+  decodeBurnMessageBody,
+  type BridgePreviewResult,
+
+  // Errors
+  BridgeError,
+  BridgeUnsupportedRouteError,
+  BridgeAttestationTimeoutError,
+  BridgeAttestationError,
+  BridgeSameChainError,
+  BridgeCompletionError,
+  BridgeApprovalError,
+  BridgeLimitError,
+  BridgeDestinationNotAllowedError,
+  BridgeNoRouteError,
+  BridgeAllRoutesFailed,
+  BridgeProtocolUnavailableError,
+} from './bridge/index.js';
 
 // Safety presets
 export const SafetyPresets = {
