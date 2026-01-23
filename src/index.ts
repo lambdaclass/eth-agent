@@ -155,6 +155,19 @@ export {
   P256_VERIFIER,
   type PasskeyCredential,
   type PasskeySignature,
+
+  // Uniswap
+  UniswapClient,
+  createUniswapClient,
+  isUniswapSupported,
+  getDefaultDeadline,
+  UNISWAP_ROUTER_ADDRESSES,
+  WETH_ADDRESSES,
+  FEE_TIERS,
+  type SwapQuote,
+  type SwapParams,
+  type SwapExecutionResult,
+  type FeeTier,
 } from './protocol/index.js';
 
 // Stablecoins
@@ -178,6 +191,36 @@ export {
   formatStablecoinAmount,
 } from './stablecoins/index.js';
 
+// Tokens (general token registry)
+export {
+  // Token types
+  type TokenInfo,
+  type TokenSymbol,
+  // Native ETH
+  ETH_TOKEN,
+  // Common tokens
+  WETH,
+  UNI,
+  LINK,
+  WBTC,
+  AAVE,
+  CRV,
+  MKR,
+  SNX,
+  LDO,
+  TOKENS,
+  // Utilities
+  getTokenBySymbol,
+  getTokenAddress,
+  getTokensForChain,
+  isKnownToken,
+  resolveToken,
+  parseTokenAmount,
+  formatTokenAmount,
+  isNativeETH,
+  getWETHAddress,
+} from './tokens/index.js';
+
 // Agent layer (main export)
 export {
   // Main wallet
@@ -192,6 +235,9 @@ export {
   type StablecoinBalances,
   type SendStablecoinOptions,
   type SendStablecoinResult,
+  type SwapOptions,
+  type SwapQuoteResult,
+  type SwapResult,
   type BridgeUSDCOptions,
   type BridgeUSDCResult,
 
@@ -261,6 +307,14 @@ export {
   OperationPolicyError,
   OperationNotAllowedError,
   EmergencyStopError,
+  // Swap errors
+  SwapError,
+  InsufficientLiquidityError,
+  SlippageExceededError,
+  TokenNotSupportedError,
+  PriceImpactTooHighError,
+  SwapLimitError,
+  TokenNotAllowedError,
 } from './agent/index.js';
 
 // Bridge module

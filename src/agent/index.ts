@@ -15,6 +15,9 @@ export type {
   StablecoinBalances,
   SendStablecoinOptions,
   SendStablecoinResult,
+  SwapOptions,
+  SwapQuoteResult,
+  SwapResult,
   BridgeUSDCOptions,
   BridgeUSDCResult,
 } from './wallet.js';
@@ -85,5 +88,13 @@ export {
   OperationPolicyError,
   OperationNotAllowedError,
   EmergencyStopError,
+  // Swap errors
+  SwapError,
+  InsufficientLiquidityError,
+  SlippageExceededError,
+  TokenNotSupportedError,
+  PriceImpactTooHighError,
+  SwapLimitError,
+  TokenNotAllowedError,
 } from './errors.js';
 export type { ErrorDetails } from './errors.js';

@@ -28,6 +28,13 @@ import {
   OperationPolicyError,
   OperationNotAllowedError,
   EmergencyStopError,
+  SwapError,
+  InsufficientLiquidityError,
+  SlippageExceededError,
+  TokenNotSupportedError,
+  PriceImpactTooHighError,
+  SwapLimitError,
+  TokenNotAllowedError,
 } from '../../src/agent/errors.js';
 
 describe('Agent Errors', () => {
@@ -334,6 +341,150 @@ describe('Agent Errors', () => {
       expect(error.name).toBe('EmergencyStopError');
       expect(error.code).toBe('EMERGENCY_STOP');
       expect(error.message).toContain('Suspicious activity');
+    });
+  });
+
+  describe('SwapError', () => {
+    it('creates swap error', () => {
+      const error = new SwapError({
+        code: 'SWAP_FAILED',
+        message: 'Swap failed',
+      });
+      expect(error.name).toBe('SwapError');
+      expect(error.code).toBe('SWAP_FAILED');
+    });
+  });
+
+  describe('InsufficientLiquidityError', () => {
+    it('creates insufficient liquidity error', () => {
+      const error = new InsufficientLiquidityError({
+        tokenIn: 'USDC',
+        tokenOut: 'ETH',
+        chainId: 1,
+      });
+      expect(error.name).toBe('InsufficientLiquidityError');
+      expect(error.code).toBe('INSUFFICIENT_LIQUIDITY');
+      expect(error.message).toContain('USDC');
+      expect(error.message).toContain('ETH');
+    });
+
+    it('includes suggestion', () => {
+      const error = new InsufficientLiquidityError({
+        tokenIn: 'USDC',
+        tokenOut: 'UNKNOWN',
+        chainId: 1,
+      });
+      expect(error.suggestion).toBeDefined();
+    });
+  });
+
+  describe('SlippageExceededError', () => {
+    it('creates slippage exceeded error', () => {
+      const error = new SlippageExceededError({
+        expected: '100 USDC',
+        actual: '95 USDC',
+        slippageTolerance: 1,
+      });
+      expect(error.name).toBe('SlippageExceededError');
+      expect(error.code).toBe('SLIPPAGE_EXCEEDED');
+      expect(error.message).toContain('expected');
+      expect(error.message).toContain('1%');
+    });
+
+    it('provides suggestion', () => {
+      const error = new SlippageExceededError({
+        expected: '100 USDC',
+        actual: '90 USDC',
+        slippageTolerance: 0.5,
+      });
+      expect(error.suggestion).toContain('slippage');
+    });
+  });
+
+  describe('TokenNotSupportedError', () => {
+    it('creates token not supported error', () => {
+      const error = new TokenNotSupportedError({
+        token: 'UNKNOWN_TOKEN',
+        chainId: 1,
+      });
+      expect(error.name).toBe('TokenNotSupportedError');
+      expect(error.code).toBe('TOKEN_NOT_SUPPORTED');
+      expect(error.message).toContain('UNKNOWN_TOKEN');
+    });
+
+    it('includes chain info', () => {
+      const error = new TokenNotSupportedError({
+        token: 'TEST',
+        chainId: 137,
+      });
+      expect(error.message).toContain('137');
+    });
+  });
+
+  describe('PriceImpactTooHighError', () => {
+    it('creates price impact error', () => {
+      const error = new PriceImpactTooHighError({
+        priceImpact: 15,
+        maxAllowed: 5,
+      });
+      expect(error.name).toBe('PriceImpactTooHighError');
+      expect(error.code).toBe('PRICE_IMPACT_TOO_HIGH');
+      expect(error.message).toContain('15.00%');
+      expect(error.message).toContain('5%');
+    });
+
+    it('suggests splitting the swap', () => {
+      const error = new PriceImpactTooHighError({
+        priceImpact: 20,
+        maxAllowed: 5,
+      });
+      expect(error.suggestion).toContain('split');
+    });
+  });
+
+  describe('SwapLimitError', () => {
+    it('creates swap limit error for per-transaction', () => {
+      const error = new SwapLimitError({
+        type: 'transaction',
+        requested: '5000',
+        limit: '1000',
+      });
+      expect(error.name).toBe('SwapLimitError');
+      expect(error.code).toBe('SWAP_TRANSACTION_LIMIT_EXCEEDED');
+      expect(error.message).toContain('per-transaction');
+      expect(error.message).toContain('5000');
+    });
+
+    it('creates swap limit error for daily limit', () => {
+      const error = new SwapLimitError({
+        type: 'daily',
+        requested: '50000',
+        remaining: '10000',
+        resetsAt: new Date(),
+      });
+      expect(error.message).toContain('daily');
+      expect(error.retryable).toBe(true);
+    });
+  });
+
+  describe('TokenNotAllowedError', () => {
+    it('creates blocked token error', () => {
+      const error = new TokenNotAllowedError({
+        token: 'SCAM_TOKEN',
+        reason: 'blocked',
+      });
+      expect(error.name).toBe('TokenNotAllowedError');
+      expect(error.code).toBe('TOKEN_NOT_ALLOWED');
+      expect(error.message).toContain('SCAM_TOKEN');
+      expect(error.message).toContain('blocked');
+    });
+
+    it('creates not-in-allowlist error', () => {
+      const error = new TokenNotAllowedError({
+        token: 'RANDOM',
+        reason: 'not_allowed',
+      });
+      expect(error.message).toContain('not in the allowed');
     });
   });
 

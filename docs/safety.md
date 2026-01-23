@@ -54,6 +54,117 @@ console.log(limits.daily.used);            // "1.2"
 console.log(limits.daily.remaining);       // "3.8"
 ```
 
+## Swap Limits
+
+Token swaps via Uniswap have their own set of limits to protect against unfavorable trades.
+
+### Configuration
+
+```typescript
+const wallet = AgentWallet.create({
+  privateKey: KEY,
+  limits: {
+    swap: {
+      perTransactionUSD: 5000,      // Max $5,000 per swap
+      perDayUSD: 50000,             // Max $50,000 per day in swaps
+      maxSlippagePercent: 1,        // Max 1% slippage allowed
+      maxPriceImpactPercent: 5,     // Max 5% price impact
+      allowedTokens: ['ETH', 'USDC', 'USDT', 'WETH', 'UNI', 'LINK'],
+      blockedTokens: ['SCAM_TOKEN'],
+    },
+  },
+});
+```
+
+### Slippage Protection
+
+**Slippage** is the difference between the quoted price and the executed price. It's expressed as a **percentage value**:
+
+- `0.5` = 0.5% maximum slippage
+- `1` = 1% maximum slippage
+- `0.1` = 0.1% maximum slippage
+
+```typescript
+// This swap will fail if executed price differs >1% from quote
+await wallet.swap({
+  fromToken: 'USDC',
+  toToken: 'ETH',
+  amount: '1000',
+  slippageTolerance: 1,  // 1% max slippage (NOT 100%!)
+});
+```
+
+If the user requests a slippage higher than `maxSlippagePercent`, the swap is rejected:
+
+```json
+{
+  "code": "SLIPPAGE_EXCEEDED",
+  "message": "Requested slippage 5% exceeds maximum allowed 1%",
+  "suggestion": "Reduce slippage tolerance or contact administrator"
+}
+```
+
+### Price Impact Protection
+
+**Price impact** measures how much your swap affects the pool's price. Large swaps in low-liquidity pools can suffer significant price impact.
+
+```typescript
+limits: {
+  swap: {
+    maxPriceImpactPercent: 5,  // Reject swaps with >5% price impact
+  },
+}
+```
+
+If a swap would cause excessive price impact:
+
+```json
+{
+  "code": "PRICE_IMPACT_TOO_HIGH",
+  "message": "Price impact 7.5% exceeds maximum allowed 5%",
+  "suggestion": "Reduce swap amount or split into multiple smaller swaps"
+}
+```
+
+### Token Allowlists and Blocklists
+
+Restrict which tokens can be swapped:
+
+```typescript
+limits: {
+  swap: {
+    // Only these tokens can be swapped (if set)
+    allowedTokens: ['ETH', 'USDC', 'USDT', 'WETH'],
+
+    // These tokens are always blocked
+    blockedTokens: ['SCAM_TOKEN', 'RUGPULL'],
+  },
+}
+```
+
+Blocked token swaps throw:
+
+```json
+{
+  "code": "TOKEN_NOT_ALLOWED",
+  "message": "Token \"SCAM_TOKEN\" is blocked for swapping",
+  "suggestion": "Use a different token that is allowed by the wallet configuration"
+}
+```
+
+### Checking Swap Limits
+
+```typescript
+const limits = wallet.getSwapLimits();
+
+console.log(limits.perTransaction.limit);    // "5000" (USD)
+console.log(limits.daily.remaining);         // "45000" (USD)
+console.log(limits.maxSlippagePercent);      // 1
+console.log(limits.maxPriceImpactPercent);   // 5
+console.log(limits.allowedTokens);           // ['ETH', 'USDC', ...] or null
+console.log(limits.blockedTokens);           // ['SCAM_TOKEN']
+```
+
 ### Bridge Limits
 
 Cross-chain bridging has separate limits to control USDC transfers between chains:
@@ -104,7 +215,6 @@ console.log(bridgeLimits.daily.remaining);  // "7500"
   "suggestion": "Use one of the allowed destination chains: Arbitrum, Base, Optimism"
 }
 ```
-
 ## Emergency Stop
 
 Halt all operations if balance drops too low:
@@ -285,3 +395,11 @@ Simulation catches:
 5. **Test limits in staging**: Verify your limits match your threat model before production.
 
 6. **Review blocked address lists**: Keep them updated with known scam addresses.
+
+7. **Use token allowlists for swaps**: Only allow swapping well-known tokens to prevent trading in scam tokens.
+
+8. **Keep slippage low**: Default to 0.5-1% slippage. High slippage tolerance can lead to unfavorable trades.
+
+9. **Monitor price impact**: Set `maxPriceImpactPercent` to 5% or lower to avoid large losses in low-liquidity pools.
+
+10. **Get quotes before swapping**: Use `getSwapQuote()` to preview expected output before executing.
