@@ -50,6 +50,7 @@ export class BridgeRouter {
   private readonly account: BridgeRouterConfig['account'];
   private readonly limitsEngine?: BridgeRouterConfig['limitsEngine'];
   private readonly debug: boolean;
+  private readonly ethPriceUSD: number;
 
   private readonly protocols: Map<string, ProtocolRegistryEntry> = new Map();
   private readonly selector: RouteSelector;
@@ -64,6 +65,7 @@ export class BridgeRouter {
     this.account = config.account;
     this.limitsEngine = config.limitsEngine;
     this.debug = config.debug ?? false;
+    this.ethPriceUSD = config.ethPriceUSD ?? 2000;
 
     this.selector = new RouteSelector();
     this.explainer = new ExplainBridge();
@@ -512,7 +514,7 @@ export class BridgeRouter {
         name: destChainName,
       },
       recipient: result.recipient,
-      estimatedTime: result.estimatedTime,
+      estimatedTime: this.buildEstimatedTime(protocol),
       summary: `Bridging ${formattedAmount} ${request.token.symbol} from ${sourceChainName} to ${destChainName} via ${protocolName}. Tracking ID: ${trackingId}`,
       protocolData: {
         messageHash: result.messageHash,
@@ -766,11 +768,8 @@ export class BridgeRouter {
    * Gas fee is in wei, convert to ETH then to USD
    */
   private estimateGasFeeInUSD(gasFeeWei: bigint): number {
-    // Conservative ETH price estimate
-    // In production, you'd want to fetch this from a price oracle
-    const ethPriceUSD = 2000;
     const gasInEth = Number(gasFeeWei) / 1e18;
-    return Math.round(gasInEth * ethPriceUSD * 100) / 100;
+    return Math.round(gasInEth * this.ethPriceUSD * 100) / 100;
   }
 
   /**
@@ -785,6 +784,47 @@ export class BridgeRouter {
     } else {
       return `${gasInEth.toFixed(6)} ETH`;
     }
+  }
+
+  /**
+   * Build structured estimated time from protocol info
+   */
+  private buildEstimatedTime(protocol: BridgeProtocolV2): {
+    minSeconds: number;
+    maxSeconds: number;
+    display: string;
+  } {
+    const estimatedTime = protocol.info?.estimatedTimeSeconds;
+
+    // Handle different formats
+    let min: number;
+    let max: number;
+
+    if (estimatedTime === undefined) {
+      // Default to 15-30 minutes if not specified
+      min = 900;
+      max = 1800;
+    } else if (typeof estimatedTime === 'number') {
+      // Single number - use as both min and max
+      min = estimatedTime;
+      max = estimatedTime;
+    } else {
+      // Object with min/max
+      min = estimatedTime.min;
+      max = estimatedTime.max;
+    }
+
+    const minMinutes = Math.round(min / 60);
+    const maxMinutes = Math.round(max / 60);
+    const display = min === max
+      ? `~${minMinutes} minutes`
+      : `${minMinutes}-${maxMinutes} minutes`;
+
+    return {
+      minSeconds: min,
+      maxSeconds: max,
+      display,
+    };
   }
 
   // ============ Explanation ============
