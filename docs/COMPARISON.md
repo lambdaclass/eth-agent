@@ -39,7 +39,7 @@ eth-agent was designed from first principles for autonomous operation. Safety co
 | Address allowlists | ✅ | ❌ | ❌ | ❌ | ❌ |
 | New recipient verification | ✅ | ❌ | ❌ | ❌ | ❌ |
 | Emergency stop trigger | ✅ | ❌ | ❌ | ❌ | ❌ |
-| Balance threshold alerts | ✅ | ❌ | ❌ | ❌ | ❌ |
+| Minimum balance enforcement | ✅ | ❌ | ❌ | ❌ | ❌ |
 | Transaction simulation | ✅ | ❌ | ✅* | ❌ | ❌ |
 | Transaction preview | ✅ | ❌ | ❌ | ❌ | ❌ |
 
@@ -76,8 +76,7 @@ eth-agent was designed from first principles for autonomous operation. Safety co
 | Swap spending limits | ✅ | ❌ | ❌ | ❌ | ❌ |
 | Cross-chain bridging | ✅ | ❌ | ❌ | ❌ | ❌ |
 | CCTP integration | ✅ | ❌ | ❌ | ❌ | ❌ |
-| Stargate integration | ✅ | ❌ | ❌ | ❌ | ❌ |
-| Across integration | ✅ | ❌ | ❌ | ❌ | ❌ |
+| Pluggable bridge protocols | ✅ | ❌ | ❌ | ❌ | ❌ |
 | Bridge route comparison | ✅ | ❌ | ❌ | ❌ | ❌ |
 | Bridge status tracking | ✅ | ❌ | ❌ | ❌ | ❌ |
 | ERC-4337 smart accounts | ✅ | ❌ | ✅ | ❌ | ❌ |
@@ -279,22 +278,22 @@ const routes = await wallet.compareBridgeRoutes({
   destinationChainId: 42161 // Arbitrum
 });
 
-// Bridge using the cheapest route
+// Bridge using CCTP
 await wallet.bridge({
   token: USDC,
   amount: '1000',
   destinationChainId: 42161,
-  protocol: 'cctp', // or 'stargate', 'across'
+  protocol: 'cctp',
 });
 
 // Track status
 const status = await wallet.getBridgeStatus(txHash);
 ```
 
-Supported protocols:
-- **CCTP (Circle)** — Zero fees, 1:1 burn/mint, seconds with Fast Transfers (V2)
-- **Stargate** — ~0.06% fee, 5-15 min
-- **Across** — Variable fees, ~2 seconds on L2→L2 routes
+Built-in protocol:
+- **CCTP (Circle)** — Zero fees, 1:1 burn/mint, ~13 minutes (or seconds with Fast Transfers V2)
+
+The bridge router uses a pluggable `BridgeProtocolV2` interface, allowing additional protocols (Stargate, Across, etc.) to be registered via `registerProtocol()`.
 
 ## Code Comparison Examples
 
