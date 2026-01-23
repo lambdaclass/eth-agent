@@ -8,7 +8,7 @@ import { parseAmount as parseAmountCore } from '../core/units.js';
 
 export interface ApprovalRequest {
   id: string;
-  type: 'send' | 'approve' | 'contract_call' | 'unknown';
+  type: 'send' | 'approve' | 'contract_call' | 'swap' | 'bridge' | 'transfer_token' | 'unknown';
   timestamp: Date;
   summary: string;
   details: {
@@ -22,6 +22,17 @@ export interface ApprovalRequest {
     contractArgs?: unknown[];
     risk: 'low' | 'medium' | 'high';
     warnings: string[];
+    // Swap-specific details
+    swap?: {
+      tokenIn: { symbol: string; amount: string };
+      tokenOut: { symbol: string; amount: string };
+      priceImpact: number;
+    };
+    // Bridge-specific details
+    bridge?: {
+      sourceChain: number;
+      destinationChain: number;
+    };
   };
 }
 
