@@ -54,6 +54,59 @@ describe('RPCClient', () => {
     });
   });
 
+  describe('request ID', () => {
+    it('starts with random offset to prevent collisions', async () => {
+      mockFetch({ jsonrpc: '2.0', id: 1, result: '0x1' });
+
+      const client1 = new RPCClient('https://rpc.example.com');
+      const client2 = new RPCClient('https://rpc.example.com');
+
+      await client1.getChainId();
+      await client2.getChainId();
+
+      const calls = vi.mocked(globalThis.fetch).mock.calls;
+      const body1 = JSON.parse(calls[0][1]?.body as string);
+      const body2 = JSON.parse(calls[1][1]?.body as string);
+
+      // IDs should be different between instances (random offset)
+      expect(body1.id).not.toBe(body2.id);
+    });
+
+    it('increments ID for subsequent requests', async () => {
+      mockFetch({ jsonrpc: '2.0', id: 1, result: '0x1' });
+
+      const client = new RPCClient('https://rpc.example.com');
+
+      await client.getChainId();
+      await client.getChainId();
+      await client.getChainId();
+
+      const calls = vi.mocked(globalThis.fetch).mock.calls;
+      const id1 = JSON.parse(calls[0][1]?.body as string).id;
+      const id2 = JSON.parse(calls[1][1]?.body as string).id;
+      const id3 = JSON.parse(calls[2][1]?.body as string).id;
+
+      // IDs should increment sequentially
+      expect(id2).toBe(id1 + 1);
+      expect(id3).toBe(id2 + 1);
+    });
+
+    it('uses IDs within safe integer range', async () => {
+      mockFetch({ jsonrpc: '2.0', id: 1, result: '0x1' });
+
+      const client = new RPCClient('https://rpc.example.com');
+      await client.getChainId();
+
+      const calls = vi.mocked(globalThis.fetch).mock.calls;
+      const id = JSON.parse(calls[0][1]?.body as string).id;
+
+      // ID should be a positive integer within expected range
+      expect(Number.isInteger(id)).toBe(true);
+      expect(id).toBeGreaterThan(0);
+      expect(id).toBeLessThanOrEqual(1_000_000_001); // random offset (up to 1B) + 1 increment
+    });
+  });
+
   describe('connect', () => {
     it('creates client via static method', () => {
       const client = RPCClient.connect('https://rpc.example.com');
