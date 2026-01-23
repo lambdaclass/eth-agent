@@ -140,6 +140,127 @@ async transferToken(options: {
 
 Transfer ERC-20 tokens.
 
+#### bridgeUSDC
+
+```typescript
+async bridgeUSDC(options: BridgeUSDCOptions): Promise<BridgeUSDCResult>
+```
+
+Bridge USDC to another chain using Circle's CCTP.
+
+```typescript
+interface BridgeUSDCOptions {
+  amount: string | number;      // Human-readable amount (e.g., "100")
+  destinationChainId: number;   // Target chain ID
+  recipient?: string;           // Optional recipient (defaults to sender)
+}
+
+interface BridgeUSDCResult {
+  burnTxHash: Hash;             // Transaction hash on source chain
+  messageHash: Hex;             // CCTP message hash for tracking
+  messageBytes: Hex;            // Raw message bytes
+  nonce: bigint;                // CCTP nonce
+  amount: { raw: bigint; formatted: string };
+  recipient: Address;
+  estimatedTime: string;        // e.g., "10-30 minutes"
+  sourceChainId: number;
+  destinationChainId: number;
+  summary: string;              // Human-readable summary
+  limits: { remaining: { daily: string } };
+}
+```
+
+#### previewBridgeUSDC
+
+```typescript
+async previewBridgeUSDC(options: BridgeUSDCOptions): Promise<BridgePreviewResult>
+```
+
+Preview a bridge operation without executing.
+
+```typescript
+interface BridgePreviewResult {
+  canBridge: boolean;
+  blockers: string[];           // Reasons why bridge cannot proceed
+  sourceChain: { id: number; name: string };
+  destinationChain: { id: number; name: string };
+  amount: { raw: bigint; formatted: string };
+  balance: { raw: bigint; formatted: string };
+  allowance: bigint;
+  needsApproval: boolean;
+  estimatedTime: string;
+}
+```
+
+#### getBridgeStatus
+
+```typescript
+async getBridgeStatus(messageHash: Hex): Promise<BridgeStatusResult>
+```
+
+Get the status of a bridge transaction.
+
+```typescript
+interface BridgeStatusResult {
+  status: BridgeStatus;
+  messageHash: Hex;
+  attestation?: Hex;            // Present when attestation is ready
+  error?: string;
+  updatedAt: Date;
+}
+
+type BridgeStatus =
+  | 'pending_burn'              // Burn TX submitted
+  | 'burn_confirmed'            // Burn TX confirmed
+  | 'attestation_pending'       // Waiting for Circle attestation
+  | 'attestation_ready'         // Attestation received
+  | 'pending_mint'              // Mint TX submitted
+  | 'completed'                 // Bridge complete
+  | 'failed';                   // Bridge failed
+```
+
+#### waitForBridgeAttestation
+
+```typescript
+async waitForBridgeAttestation(messageHash: Hex): Promise<Hex>
+```
+
+Wait for Circle's attestation. Blocks until attestation is ready (10-30 min on mainnet).
+
+Returns the attestation signature (`Hex`).
+
+#### safeBridgeUSDC
+
+```typescript
+async safeBridgeUSDC(options: BridgeUSDCOptions): Promise<Result<BridgeUSDCResult, EthAgentError>>
+```
+
+Safe version that returns a `Result` type instead of throwing.
+
+#### getBridgeLimits
+
+```typescript
+getBridgeLimits(): BridgeLimitStatus
+```
+
+Get current bridge spending limit status.
+
+```typescript
+interface BridgeLimitStatus {
+  perTransaction: { limit: string };
+  daily: { limit: string; spent: string; remaining: string };
+  allowedDestinations?: number[];
+}
+```
+
+#### getBridgeHistory
+
+```typescript
+getBridgeHistory(options?: { hours?: number; limit?: number }): BridgeSpendingRecord[]
+```
+
+Get recent bridge transaction history.
+
 #### preview
 
 ```typescript
@@ -449,6 +570,12 @@ interface EthAgentError {
 | `UNDERPRICED` | `UnderpricedError` | Gas price too low |
 | `REVERT` | `RevertError` | Contract reverted |
 | `EMERGENCY_STOP` | `EmergencyStopError` | Balance below minimum |
+| `BRIDGE_UNSUPPORTED_ROUTE` | `BridgeUnsupportedRouteError` | Route not supported |
+| `BRIDGE_SAME_CHAIN` | `BridgeSameChainError` | Source = destination |
+| `BRIDGE_LIMIT_EXCEEDED` | `BridgeLimitError` | Amount exceeds bridge limit |
+| `BRIDGE_DESTINATION_NOT_ALLOWED` | `BridgeDestinationNotAllowedError` | Destination not whitelisted |
+| `BRIDGE_ATTESTATION_TIMEOUT` | `BridgeAttestationTimeoutError` | Attestation took too long |
+| `BRIDGE_NO_ROUTE` | `BridgeNoRouteError` | No available routes |
 
 ## Result Types
 
