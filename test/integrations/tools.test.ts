@@ -26,7 +26,8 @@ describe('Tools', () => {
       send: vi.fn(),
       transferToken: vi.fn(),
       preview: vi.fn(),
-      sendStablecoin: vi.fn(),
+      sendUSDC: vi.fn(),
+      sendUSDT: vi.fn(),
       getStablecoinBalance: vi.fn(),
       getStablecoinBalances: vi.fn(),
     } as unknown as AgentWallet;
@@ -48,10 +49,11 @@ describe('Tools', () => {
       expect(toolNames).toContain('eth_preview');
 
       // Stablecoin tools
-      expect(toolNames).toContain('stablecoin_send');
-      expect(toolNames).toContain('stablecoin_balance');
+      expect(toolNames).toContain('usdc_send');
+      expect(toolNames).toContain('usdt_send');
+      expect(toolNames).toContain('usdc_balance');
+      expect(toolNames).toContain('usdt_balance');
       expect(toolNames).toContain('stablecoin_balances');
-      expect(toolNames).toContain('stablecoin_list');
 
       // Network tools
       expect(toolNames).toContain('network_list');
@@ -582,9 +584,9 @@ describe('Tools', () => {
   });
 
   // === Stablecoin Tools ===
-  describe('stablecoin_send tool', () => {
-    it('sends USDC by symbol', async () => {
-      vi.mocked(mockWallet.sendStablecoin).mockResolvedValue({
+  describe('usdc_send tool', () => {
+    it('sends USDC', async () => {
+      vi.mocked(mockWallet.sendUSDC).mockResolvedValue({
         success: true,
         hash: '0xabc' as any,
         summary: 'Sent 100 USDC to recipient',
@@ -593,20 +595,39 @@ describe('Tools', () => {
         limits: {} as any,
       });
 
-      const tool = getTool(tools, 'stablecoin_send')!;
-      const result = await tool.handler({ token: 'USDC', to: recipient, amount: '100' });
+      const tool = getTool(tools, 'usdc_send')!;
+      const result = await tool.handler({ to: recipient, amount: '100' });
 
       expect(result.success).toBe(true);
       expect(result.summary).toContain('Sent');
-      expect(mockWallet.sendStablecoin).toHaveBeenCalledWith({
-        token: expect.objectContaining({ symbol: 'USDC' }),
+      expect(mockWallet.sendUSDC).toHaveBeenCalledWith({
         to: recipient,
         amount: '100',
       });
     });
 
-    it('sends USDT by symbol', async () => {
-      vi.mocked(mockWallet.sendStablecoin).mockResolvedValue({
+    it('handles send error', async () => {
+      vi.mocked(mockWallet.sendUSDC).mockRejectedValue(new Error('Insufficient USDC'));
+
+      const tool = getTool(tools, 'usdc_send')!;
+      const result = await tool.handler({ to: recipient, amount: '100' });
+
+      expect(result.success).toBe(false);
+      expect(result.error).toBe('Insufficient USDC');
+    });
+
+    it('has correct metadata', () => {
+      const tool = getTool(tools, 'usdc_send')!;
+
+      expect(tool.metadata.category).toBe('write');
+      expect(tool.metadata.requiresApproval).toBe(true);
+      expect(tool.metadata.riskLevel).toBe('high');
+    });
+  });
+
+  describe('usdt_send tool', () => {
+    it('sends USDT', async () => {
+      vi.mocked(mockWallet.sendUSDT).mockResolvedValue({
         success: true,
         hash: '0xdef' as any,
         summary: 'Sent 50 USDT to recipient',
@@ -615,27 +636,29 @@ describe('Tools', () => {
         limits: {} as any,
       });
 
-      const tool = getTool(tools, 'stablecoin_send')!;
-      const result = await tool.handler({ token: 'USDT', to: recipient, amount: '50' });
+      const tool = getTool(tools, 'usdt_send')!;
+      const result = await tool.handler({ to: recipient, amount: '50' });
 
       expect(result.success).toBe(true);
-      expect(mockWallet.sendStablecoin).toHaveBeenCalledWith({
-        token: expect.objectContaining({ symbol: 'USDT' }),
+      expect(result.summary).toContain('Sent');
+      expect(mockWallet.sendUSDT).toHaveBeenCalledWith({
         to: recipient,
         amount: '50',
       });
     });
 
-    it('rejects unknown stablecoin', async () => {
-      const tool = getTool(tools, 'stablecoin_send')!;
-      const result = await tool.handler({ token: 'UNKNOWN', to: recipient, amount: '100' });
+    it('handles send error', async () => {
+      vi.mocked(mockWallet.sendUSDT).mockRejectedValue(new Error('Insufficient USDT'));
+
+      const tool = getTool(tools, 'usdt_send')!;
+      const result = await tool.handler({ to: recipient, amount: '50' });
 
       expect(result.success).toBe(false);
-      expect(result.error).toContain('Unknown stablecoin');
+      expect(result.error).toBe('Insufficient USDT');
     });
 
     it('has correct metadata', () => {
-      const tool = getTool(tools, 'stablecoin_send')!;
+      const tool = getTool(tools, 'usdt_send')!;
 
       expect(tool.metadata.category).toBe('write');
       expect(tool.metadata.requiresApproval).toBe(true);
@@ -643,7 +666,7 @@ describe('Tools', () => {
     });
   });
 
-  describe('stablecoin_balance tool', () => {
+  describe('usdc_balance tool', () => {
     it('gets USDC balance', async () => {
       vi.mocked(mockWallet.getStablecoinBalance).mockResolvedValue({
         raw: 100000000n,
@@ -652,8 +675,8 @@ describe('Tools', () => {
         decimals: 6,
       });
 
-      const tool = getTool(tools, 'stablecoin_balance')!;
-      const result = await tool.handler({ token: 'USDC' });
+      const tool = getTool(tools, 'usdc_balance')!;
+      const result = await tool.handler({});
 
       expect(result.success).toBe(true);
       expect(result.summary).toContain('USDC');
@@ -664,33 +687,50 @@ describe('Tools', () => {
       vi.mocked(mockWallet.getStablecoinBalance).mockResolvedValue({
         raw: 50000000n,
         formatted: '50.00',
-        symbol: 'USDT',
+        symbol: 'USDC',
         decimals: 6,
       });
 
-      const tool = getTool(tools, 'stablecoin_balance')!;
-      await tool.handler({ token: 'USDT', address: recipient });
+      const tool = getTool(tools, 'usdc_balance')!;
+      await tool.handler({ address: recipient });
 
       expect(mockWallet.getStablecoinBalance).toHaveBeenCalledWith(
-        expect.objectContaining({ symbol: 'USDT' }),
+        expect.objectContaining({ symbol: 'USDC' }),
         recipient
       );
     });
 
-    it('rejects unknown stablecoin', async () => {
-      const tool = getTool(tools, 'stablecoin_balance')!;
-      const result = await tool.handler({ token: 'UNKNOWN' });
-
-      expect(result.success).toBe(false);
-      expect(result.error).toContain('Unknown stablecoin');
-    });
-
     it('has correct metadata', () => {
-      const tool = getTool(tools, 'stablecoin_balance')!;
+      const tool = getTool(tools, 'usdc_balance')!;
 
       expect(tool.metadata.category).toBe('read');
       expect(tool.metadata.requiresApproval).toBe(false);
       expect(tool.metadata.riskLevel).toBe('none');
+    });
+  });
+
+  describe('usdt_balance tool', () => {
+    it('gets USDT balance', async () => {
+      vi.mocked(mockWallet.getStablecoinBalance).mockResolvedValue({
+        raw: 50000000n,
+        formatted: '50.00',
+        symbol: 'USDT',
+        decimals: 6,
+      });
+
+      const tool = getTool(tools, 'usdt_balance')!;
+      const result = await tool.handler({});
+
+      expect(result.success).toBe(true);
+      expect(result.summary).toContain('USDT');
+      expect(result.summary).toContain('50.00');
+    });
+
+    it('has correct metadata', () => {
+      const tool = getTool(tools, 'usdt_balance')!;
+
+      expect(tool.metadata.category).toBe('read');
+      expect(tool.metadata.requiresApproval).toBe(false);
     });
   });
 
@@ -723,25 +763,6 @@ describe('Tools', () => {
       const tool = getTool(tools, 'stablecoin_balances')!;
 
       expect(tool.metadata.category).toBe('read');
-      expect(tool.metadata.requiresApproval).toBe(false);
-    });
-  });
-
-  describe('stablecoin_list tool', () => {
-    it('lists available stablecoins', async () => {
-      const tool = getTool(tools, 'stablecoin_list')!;
-      const result = await tool.handler({});
-
-      expect(result.success).toBe(true);
-      expect(result.data).toHaveProperty('chainId');
-      expect(result.data).toHaveProperty('stablecoins');
-      expect(result.summary).toContain('USDC');
-    });
-
-    it('has correct metadata', () => {
-      const tool = getTool(tools, 'stablecoin_list')!;
-
-      expect(tool.metadata.category).toBe('info');
       expect(tool.metadata.requiresApproval).toBe(false);
     });
   });

@@ -456,48 +456,31 @@ The swap will be quoted before execution to show expected output. Slippage prote
 
     // === Stablecoin Operations ===
     {
-      name: 'stablecoin_send',
-      description: `Send stablecoins (USDC, USDT) to an address. No need to know contract addresses - just specify the token symbol and amount.
+      name: 'usdc_send',
+      description: `Send USDC to an address or ENS name. Amount is in human-readable units (100 means 100 USDC).
 
 Example usage:
 - Send 100 USDC to alice.eth
-- Send 50.50 USDT to 0x1234...
+- Send 50.50 USDC to 0x1234...
 
-Amount is in human-readable units (100 means 100 USDC, not 100000000).
 Spending limits apply. Transaction will be simulated before sending.`,
       parameters: {
         type: 'object',
         properties: {
-          token: {
-            type: 'string',
-            description: 'Stablecoin symbol: USDC or USDT',
-            enum: ['USDC', 'USDT'],
-          },
           to: {
             type: 'string',
             description: 'Recipient address (0x...) or ENS name (e.g., alice.eth)',
           },
           amount: {
             type: 'string',
-            description: 'Amount to send in human units (e.g., "100" for 100 USDC)',
+            description: 'Amount to send (e.g., "100" for 100 USDC)',
           },
         },
-        required: ['token', 'to', 'amount'],
+        required: ['to', 'amount'],
       },
       handler: async (params) => {
         try {
-          const symbol = params['token'] as string;
-          const stablecoin = STABLECOINS[symbol as keyof typeof STABLECOINS];
-          if (!stablecoin) {
-            return {
-              success: false,
-              error: `Unknown stablecoin: ${symbol}. Supported: USDC, USDT`,
-              summary: `Unknown stablecoin: ${symbol}`,
-            };
-          }
-
-          const result = await wallet.sendStablecoin({
-            token: stablecoin,
+          const result = await wallet.sendUSDC({
             to: params['to'] as string,
             amount: params['amount'] as string,
           });
@@ -511,7 +494,7 @@ Spending limits apply. Transaction will be simulated before sending.`,
           return {
             success: false,
             error: (err as Error).message,
-            summary: `Failed to send stablecoin: ${(err as Error).message}`,
+            summary: `Failed to send USDC: ${(err as Error).message}`,
           };
         }
       },
@@ -523,50 +506,125 @@ Spending limits apply. Transaction will be simulated before sending.`,
     },
 
     {
-      name: 'stablecoin_balance',
-      description: 'Get the balance of a specific stablecoin (USDC, USDT, etc.) for the wallet or any address.',
+      name: 'usdt_send',
+      description: `Send USDT to an address or ENS name. Amount is in human-readable units (100 means 100 USDT).
+
+Example usage:
+- Send 100 USDT to alice.eth
+- Send 50.50 USDT to 0x1234...
+
+Spending limits apply. Transaction will be simulated before sending.`,
       parameters: {
         type: 'object',
         properties: {
-          token: {
+          to: {
             type: 'string',
-            description: 'Stablecoin symbol: USDC, USDT, USDS, DAI, PYUSD, or FRAX',
-            enum: ['USDC', 'USDT', 'USDS', 'DAI', 'PYUSD', 'FRAX'],
+            description: 'Recipient address (0x...) or ENS name (e.g., alice.eth)',
           },
+          amount: {
+            type: 'string',
+            description: 'Amount to send (e.g., "100" for 100 USDT)',
+          },
+        },
+        required: ['to', 'amount'],
+      },
+      handler: async (params) => {
+        try {
+          const result = await wallet.sendUSDT({
+            to: params['to'] as string,
+            amount: params['amount'] as string,
+          });
+
+          return {
+            success: result.success,
+            data: result,
+            summary: result.summary,
+          };
+        } catch (err) {
+          return {
+            success: false,
+            error: (err as Error).message,
+            summary: `Failed to send USDT: ${(err as Error).message}`,
+          };
+        }
+      },
+      metadata: {
+        category: 'write',
+        requiresApproval: true,
+        riskLevel: 'high',
+      },
+    },
+
+    {
+      name: 'usdc_balance',
+      description: 'Get the USDC balance for the wallet or any address.',
+      parameters: {
+        type: 'object',
+        properties: {
           address: {
             type: 'string',
             description: 'Address to check. Leave empty for wallet address.',
           },
         },
-        required: ['token'],
+        required: [],
       },
       handler: async (params) => {
         try {
-          const symbol = params['token'] as string;
-          const stablecoin = STABLECOINS[symbol as keyof typeof STABLECOINS];
-          if (!stablecoin) {
-            return {
-              success: false,
-              error: `Unknown stablecoin: ${symbol}`,
-              summary: `Unknown stablecoin: ${symbol}`,
-            };
-          }
-
           const result = await wallet.getStablecoinBalance(
-            stablecoin,
+            STABLECOINS.USDC,
             params['address'] as string | undefined
           );
 
           return {
             success: true,
             data: result,
-            summary: `${symbol} Balance: ${result.formatted} ${result.symbol}`,
+            summary: `USDC Balance: ${result.formatted}`,
           };
         } catch (err) {
           return {
             success: false,
             error: (err as Error).message,
-            summary: `Failed to get stablecoin balance: ${(err as Error).message}`,
+            summary: `Failed to get USDC balance: ${(err as Error).message}`,
+          };
+        }
+      },
+      metadata: {
+        category: 'read',
+        requiresApproval: false,
+        riskLevel: 'none',
+      },
+    },
+
+    {
+      name: 'usdt_balance',
+      description: 'Get the USDT balance for the wallet or any address.',
+      parameters: {
+        type: 'object',
+        properties: {
+          address: {
+            type: 'string',
+            description: 'Address to check. Leave empty for wallet address.',
+          },
+        },
+        required: [],
+      },
+      handler: async (params) => {
+        try {
+          const result = await wallet.getStablecoinBalance(
+            STABLECOINS.USDT,
+            params['address'] as string | undefined
+          );
+
+          return {
+            success: true,
+            data: result,
+            summary: `USDT Balance: ${result.formatted}`,
+          };
+        } catch (err) {
+          return {
+            success: false,
+            error: (err as Error).message,
+            summary: `Failed to get USDT balance: ${(err as Error).message}`,
           };
         }
       },
@@ -579,7 +637,7 @@ Spending limits apply. Transaction will be simulated before sending.`,
 
     {
       name: 'stablecoin_balances',
-      description: 'Get all stablecoin balances for the wallet. Returns balances for all supported stablecoins on the current network.',
+      description: 'Get all stablecoin balances for the wallet. Returns balances for all supported stablecoins on the current network (USDC, USDT, DAI, etc.).',
       parameters: {
         type: 'object',
         properties: {
@@ -615,51 +673,6 @@ Spending limits apply. Transaction will be simulated before sending.`,
       },
       metadata: {
         category: 'read',
-        requiresApproval: false,
-        riskLevel: 'none',
-      },
-    },
-
-    {
-      name: 'stablecoin_list',
-      description: 'List all stablecoins available on the current network with their contract addresses.',
-      parameters: {
-        type: 'object',
-        properties: {},
-        required: [],
-      },
-      handler: async () => {
-        try {
-          const caps = wallet.getCapabilities();
-          const chainId = caps.network.chainId;
-          const available = getStablecoinsForChain(chainId);
-
-          const stablecoins = Array.from(available.entries()).map(([symbol, address]) => ({
-            symbol,
-            address,
-            decimals: STABLECOINS[symbol as keyof typeof STABLECOINS]?.decimals,
-          }));
-
-          return {
-            success: true,
-            data: {
-              chainId,
-              stablecoins,
-            },
-            summary: stablecoins.length > 0
-              ? `Available on chain ${chainId}: ${stablecoins.map(s => s.symbol).join(', ')}`
-              : `No stablecoins available on chain ${chainId}`,
-          };
-        } catch (err) {
-          return {
-            success: false,
-            error: (err as Error).message,
-            summary: `Failed to list stablecoins: ${(err as Error).message}`,
-          };
-        }
-      },
-      metadata: {
-        category: 'info',
         requiresApproval: false,
         riskLevel: 'none',
       },
