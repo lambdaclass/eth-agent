@@ -17,6 +17,161 @@ const ENS_REGISTRY = '0x00000000000C2E074eC69A0dFb2997BA6C7d2e1e' as Address;
 const ZERO_ADDRESS = '0x0000000000000000000000000000000000000000' as Address;
 
 /**
+ * ENS name validation error
+ */
+export class ENSValidationError extends Error {
+  constructor(
+    message: string,
+    public readonly name_: string,
+    public readonly code: string
+  ) {
+    super(message);
+    this.name = 'ENSValidationError';
+  }
+}
+
+/**
+ * Characters that are explicitly disallowed in ENS names
+ * Based on ENSIP-15 normalization rules
+ */
+// eslint-disable-next-line no-control-regex
+const DISALLOWED_CHARS = /[\x00-\x1f\x7f]/; // Control characters
+
+/**
+ * Pattern for detecting potential homograph attacks (mixed scripts)
+ * This is a simplified check - full ENSIP-15 requires more comprehensive Unicode handling
+ */
+const LATIN_CHARS = /[a-z]/i;
+const CYRILLIC_CHARS = /[\u0400-\u04FF]/;
+const GREEK_CHARS = /[\u0370-\u03FF]/;
+
+/**
+ * Validate and normalize an ENS name according to ENSIP-15 (simplified)
+ * @param name The ENS name to validate
+ * @returns The normalized name
+ * @throws ENSValidationError if the name is invalid
+ */
+export function normalizeENSName(name: string): string {
+  if (!name || typeof name !== 'string') {
+    throw new ENSValidationError('ENS name must be a non-empty string', name ?? '', 'EMPTY_NAME');
+  }
+
+  // Check for null bytes (security risk)
+  if (name.includes('\x00')) {
+    throw new ENSValidationError(
+      'ENS name contains null byte',
+      name,
+      'NULL_BYTE'
+    );
+  }
+
+  // Check for control characters
+  if (DISALLOWED_CHARS.test(name)) {
+    throw new ENSValidationError(
+      'ENS name contains disallowed control characters',
+      name,
+      'CONTROL_CHARS'
+    );
+  }
+
+  // Normalize to NFC (Unicode Normalization Form Composed)
+  let normalized = name.normalize('NFC');
+
+  // Convert to lowercase
+  normalized = normalized.toLowerCase();
+
+  // Add .eth suffix if needed
+  if (!normalized.endsWith('.eth') && !normalized.includes('.')) {
+    normalized = `${normalized}.eth`;
+  }
+
+  // Split into labels and validate each
+  const labels = normalized.split('.');
+
+  for (const label of labels) {
+    // Empty labels are invalid (e.g., "foo..eth")
+    if (label.length === 0) {
+      throw new ENSValidationError(
+        'ENS name contains empty label',
+        name,
+        'EMPTY_LABEL'
+      );
+    }
+
+    // Label length limits (DNS compatible: 1-63 chars)
+    if (label.length > 63) {
+      throw new ENSValidationError(
+        `ENS label "${label}" exceeds 63 character limit`,
+        name,
+        'LABEL_TOO_LONG'
+      );
+    }
+
+    // Check for leading/trailing hyphens (invalid in DNS)
+    if (label.startsWith('-') || label.endsWith('-')) {
+      throw new ENSValidationError(
+        `ENS label "${label}" cannot start or end with hyphen`,
+        name,
+        'INVALID_HYPHEN'
+      );
+    }
+
+    // Check for underscore (invalid in ENS)
+    if (label.includes('_')) {
+      throw new ENSValidationError(
+        `ENS label "${label}" contains underscore which is not allowed`,
+        name,
+        'INVALID_UNDERSCORE'
+      );
+    }
+  }
+
+  // Check total name length (max 253 chars for DNS compatibility)
+  if (normalized.length > 253) {
+    throw new ENSValidationError(
+      'ENS name exceeds 253 character limit',
+      name,
+      'NAME_TOO_LONG'
+    );
+  }
+
+  // Check for potential homograph attacks (mixed scripts)
+  // Only check user-provided labels, not the TLD (eth, com, etc.)
+  // This is a security warning - mixed Latin/Cyrillic/Greek in a single label is suspicious
+  const userLabels = labels.slice(0, -1); // Exclude TLD
+  for (const label of userLabels) {
+    const hasLatin = LATIN_CHARS.test(label);
+    const hasCyrillic = CYRILLIC_CHARS.test(label);
+    const hasGreek = GREEK_CHARS.test(label);
+    const scriptCount = [hasLatin, hasCyrillic, hasGreek].filter(Boolean).length;
+
+    if (scriptCount > 1) {
+      throw new ENSValidationError(
+        `ENS label "${label}" contains mixed scripts (potential homograph attack)`,
+        name,
+        'MIXED_SCRIPTS'
+      );
+    }
+  }
+
+  return normalized;
+}
+
+/**
+ * Check if an ENS name is valid without throwing
+ * @param name The ENS name to check
+ * @returns true if valid, false otherwise
+ */
+export function isValidENSName(name: string): boolean {
+  try {
+    normalizeENSName(name);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/**
  * Options for ENS resolution
  */
 export interface ENSResolveOptions {
@@ -53,13 +208,11 @@ export class ENS {
    * @param options Optional resolution options
    */
   async resolve(name: string, options?: ENSResolveOptions): Promise<Address | null> {
-    // Validate name
-    if (!name.endsWith('.eth') && !name.includes('.')) {
-      name = `${name}.eth`;
-    }
+    // Validate and normalize name (throws ENSValidationError if invalid)
+    const normalizedName = normalizeENSName(name);
 
-    // Normalize for cache key
-    const cacheKey = name.toLowerCase();
+    // Use normalized name as cache key
+    const cacheKey = normalizedName;
 
     // Check cache first (unless skipCache is set)
     if (options?.skipCache !== true) {
@@ -69,7 +222,7 @@ export class ENS {
       }
     }
 
-    const node = namehash(name);
+    const node = namehash(normalizedName);
 
     // Get resolver for this name
     const resolver = await this.getResolver(node);
@@ -115,10 +268,13 @@ export class ENS {
    * Invalidate a specific name from the cache
    */
   invalidateCache(name: string): boolean {
-    if (!name.endsWith('.eth') && !name.includes('.')) {
-      name = `${name}.eth`;
+    try {
+      const normalizedName = normalizeENSName(name);
+      return this.addressCache.delete(normalizedName);
+    } catch {
+      // If name is invalid, it won't be in cache anyway
+      return false;
     }
-    return this.addressCache.delete(name.toLowerCase());
   }
 
   /**

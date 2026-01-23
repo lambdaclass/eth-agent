@@ -16,7 +16,16 @@ export { TransactionBuilder, signTransaction, parseTransaction } from './transac
 export type { TransactionRequest } from './transaction.js';
 
 // ENS
-export { ENS, namehash, dnsEncode, isENSName, resolveAddress } from './ens.js';
+export {
+  ENS,
+  ENSValidationError,
+  namehash,
+  dnsEncode,
+  isENSName,
+  resolveAddress,
+  normalizeENSName,
+  isValidENSName,
+} from './ens.js';
 
 // Gas estimation
 export { GasOracle, GAS_LIMITS, calculateTxCost } from './gas.js';
