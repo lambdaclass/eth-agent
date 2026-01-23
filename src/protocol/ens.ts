@@ -8,6 +8,7 @@ import { keccak256 } from '../core/hash.js';
 import { encodeFunctionCall, decodeFunctionResult } from '../core/abi.js';
 import { bytesToHex, concatHex } from '../core/hex.js';
 import { LRUCache } from '../core/cache.js';
+import { addressEquals } from '../core/address.js';
 import type { RPCClient } from './rpc.js';
 
 // ENS Registry address (same on mainnet, testnets)
@@ -147,7 +148,7 @@ export class ENS {
 
       // Verify forward resolution matches (security check)
       const forward = await this.resolve(name);
-      if (!forward || forward.toLowerCase() !== address.toLowerCase()) {
+      if (!forward || !addressEquals(forward, address)) {
         return null; // Forward resolution doesn't match
       }
 

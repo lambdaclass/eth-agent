@@ -19,7 +19,7 @@ for (let i = 0; i < 256; i++) {
  */
 export function isHex(value: unknown): value is Hex {
   if (typeof value !== 'string') return false;
-  if (!value.startsWith('0x')) return false;
+  if (!value.startsWith('0x') && !value.startsWith('0X')) return false;
   if (value.length < 2) return false;
   // Check if all characters after 0x are valid hex characters
   const hexPart = value.slice(2);

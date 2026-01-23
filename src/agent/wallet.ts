@@ -5,7 +5,7 @@
 
 import type { Address, Hash, Hex } from '../core/types.js';
 import { parseAmount, formatETH, formatUnits, ETH } from '../core/units.js';
-import { isAddress, toChecksumAddress } from '../core/address.js';
+import { isAddress, toChecksumAddress, normalizeAddress } from '../core/address.js';
 import type { Account } from '../protocol/account.js';
 import { EOA } from '../protocol/account.js';
 import { RPCClient } from '../protocol/rpc.js';
@@ -254,12 +254,12 @@ export class AgentWallet {
     // Build trusted/blocked address maps
     const trustedAddresses = new Map<string, string>();
     for (const addr of config.trustedAddresses ?? []) {
-      trustedAddresses.set(addr.address.toLowerCase(), addr.label ?? 'Trusted');
+      trustedAddresses.set(normalizeAddress(addr.address), addr.label ?? 'Trusted');
     }
 
     const blockedAddresses = new Map<string, string>();
     for (const addr of config.blockedAddresses ?? []) {
-      blockedAddresses.set(addr.address.toLowerCase(), addr.reason ?? 'Blocked');
+      blockedAddresses.set(normalizeAddress(addr.address), addr.reason ?? 'Blocked');
     }
 
     // Build approval config
@@ -291,7 +291,7 @@ export class AgentWallet {
     const to = await this.resolveAddress(options.to);
 
     // 2. Check if address is blocked
-    const blocked = this.blockedAddresses.get(to.toLowerCase());
+    const blocked = this.blockedAddresses.get(normalizeAddress(to));
     if (blocked) {
       throw new BlockedAddressError(to, blocked);
     }
@@ -344,7 +344,7 @@ export class AgentWallet {
     }
 
     // 8. Check if approval is required
-    const isTrusted = this.trustedAddresses.has(to.toLowerCase());
+    const isTrusted = this.trustedAddresses.has(normalizeAddress(to));
     if (this.approval.requiresApproval({ amount: value, recipientIsNew: !isTrusted })) {
       const approved = await this.approval.requestApproval({
         type: 'send',
@@ -482,7 +482,7 @@ export class AgentWallet {
     const to = await this.resolveAddress(options.to);
 
     // Check if blocked
-    const blocked = this.blockedAddresses.get(to.toLowerCase());
+    const blocked = this.blockedAddresses.get(normalizeAddress(to));
     if (blocked) {
       throw new BlockedAddressError(to, blocked);
     }
@@ -559,7 +559,7 @@ export class AgentWallet {
     const to = await this.resolveAddress(options.to);
 
     // Check if blocked
-    const blocked = this.blockedAddresses.get(to.toLowerCase());
+    const blocked = this.blockedAddresses.get(normalizeAddress(to));
     if (blocked) {
       throw new BlockedAddressError(to, blocked);
     }
@@ -885,7 +885,7 @@ export class AgentWallet {
       recipient = await this.resolveAddress(options.recipient);
 
       // Check if blocked
-      const blocked = this.blockedAddresses.get(recipient.toLowerCase());
+      const blocked = this.blockedAddresses.get(normalizeAddress(recipient));
       if (blocked) {
         throw new BlockedAddressError(recipient, blocked);
       }
@@ -1014,7 +1014,7 @@ export class AgentWallet {
     }
 
     // Check blocked
-    const blocked = this.blockedAddresses.get(to.toLowerCase());
+    const blocked = this.blockedAddresses.get(normalizeAddress(to));
     if (blocked) {
       blockers.push(`Address is blocked: ${blocked}`);
     }
