@@ -220,3 +220,11 @@ export type {
   ContractWriteMethods,
   TypedContractInterface,
 } from './abi-types.js';
+
+// Logger
+export {
+  noopLogger,
+  consoleLogger,
+  createPrefixedLogger,
+} from './logger.js';
+export type { LogLevel, LogContext, Logger } from './logger.js';

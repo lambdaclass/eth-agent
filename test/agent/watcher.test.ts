@@ -3,6 +3,7 @@ import { PaymentWatcher, createPaymentWatcher } from '../../src/agent/watcher.js
 import type { RPCClient } from '../../src/protocol/rpc.js';
 import type { Address, Hash, Hex } from '../../src/core/types.js';
 import { USDC } from '../../src/stablecoins/index.js';
+import type { Logger } from '../../src/core/logger.js';
 
 describe('PaymentWatcher', () => {
   const testAddress = '0x1234567890123456789012345678901234567890' as Address;
@@ -489,6 +490,113 @@ describe('PaymentWatcher', () => {
       });
 
       expect(watcher).toBeInstanceOf(PaymentWatcher);
+    });
+  });
+
+  describe('structured logging', () => {
+    it('uses provided logger for poll errors', async () => {
+      const mockLogger: Logger = {
+        debug: vi.fn(),
+        info: vi.fn(),
+        warn: vi.fn(),
+        error: vi.fn(),
+      };
+
+      vi.mocked(mockRpc.getBlockNumber).mockRejectedValueOnce(new Error('Network error'));
+
+      const watcher = new PaymentWatcher({
+        rpc: mockRpc,
+        address: testAddress,
+        pollingInterval: 1000,
+        logger: mockLogger,
+      });
+
+      // Trigger a poll that will fail
+      await watcher.checkOnce();
+
+      expect(mockLogger.error).toHaveBeenCalledWith(
+        'Payment watcher poll error',
+        expect.objectContaining({
+          error: expect.stringContaining('Network error'),
+          address: testAddress.toLowerCase(),
+        })
+      );
+    });
+
+    it('uses provided logger for handler errors', async () => {
+      const mockLogger: Logger = {
+        debug: vi.fn(),
+        info: vi.fn(),
+        warn: vi.fn(),
+        error: vi.fn(),
+      };
+
+      vi.mocked(mockRpc.getBlockNumber)
+        .mockResolvedValueOnce(100)
+        .mockResolvedValueOnce(101);
+
+      const paddedSender = '0x000000000000000000000000' + senderAddress.slice(2);
+      const paddedRecipient = '0x000000000000000000000000' + testAddress.slice(2).toLowerCase();
+
+      vi.mocked(mockRpc.getLogs).mockResolvedValueOnce([
+        {
+          address: usdcAddress,
+          topics: [transferTopic, paddedSender as Hash, paddedRecipient as Hash],
+          data: '0x0000000000000000000000000000000000000000000000000000000005f5e100' as Hex,
+          transactionHash: testHash,
+          blockNumber: 101,
+          logIndex: 0,
+          blockHash: testHash,
+          transactionIndex: 0,
+          removed: false,
+        },
+      ]);
+
+      const watcher = new PaymentWatcher({
+        rpc: mockRpc,
+        address: testAddress,
+        logger: mockLogger,
+      });
+
+      // Add a handler that throws
+      const failingHandler = vi.fn().mockRejectedValue(new Error('Handler failed'));
+      watcher.start(failingHandler);
+
+      // First poll initializes lastProcessedBlock
+      await watcher.checkOnce();
+
+      // Second poll finds payment and calls handler
+      await watcher.checkOnce();
+
+      expect(mockLogger.error).toHaveBeenCalledWith(
+        'Payment handler error',
+        expect.objectContaining({
+          error: expect.stringContaining('Handler failed'),
+          transactionHash: testHash,
+          token: 'USDC',
+        })
+      );
+
+      watcher.stop();
+    });
+
+    it('does not log when using default noop logger', async () => {
+      const consoleSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+
+      vi.mocked(mockRpc.getBlockNumber).mockRejectedValueOnce(new Error('Network error'));
+
+      const watcher = new PaymentWatcher({
+        rpc: mockRpc,
+        address: testAddress,
+        // No logger provided - uses noopLogger
+      });
+
+      await watcher.checkOnce();
+
+      // No console.error calls because noopLogger is used
+      expect(consoleSpy).not.toHaveBeenCalled();
+
+      consoleSpy.mockRestore();
     });
   });
 });
