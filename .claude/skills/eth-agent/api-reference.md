@@ -101,9 +101,24 @@ wallet.checkApproval(request: ApprovalRequest): Promise<ApprovalResult>
 ### Properties
 
 ```typescript
-wallet.address: Address          // Wallet address
-wallet.rpc: RPCClient           // Underlying RPC client
-wallet.chainId: number          // Connected chain ID
+wallet.address: Address          // Wallet address (readonly)
+```
+
+### Payment Watching Methods
+
+```typescript
+// Watch for incoming stablecoin payments (returns watcher that can be stopped)
+wallet.onStablecoinReceived(
+  handler: (payment: IncomingPayment) => void,
+  options?: { tokens?: StablecoinInfo[]; pollingInterval?: number }
+): PaymentWatcher
+
+// Wait for a specific payment (promise-based)
+wallet.waitForPayment(options?: {
+  token?: StablecoinInfo;
+  minAmount?: string;
+  timeout?: number;
+}): Promise<IncomingPayment>
 ```
 
 ## SmartAgentWallet
@@ -132,10 +147,10 @@ smartWallet.sendStablecoinGasless(options: {
 }): Promise<UserOpResult>
 
 // Batch transfers (multiple recipients, one transaction)
-smartWallet.batchTransferStablecoin(options: {
+smartWallet.sendStablecoinBatch(options: {
   token: StablecoinInfo;
   transfers: Array<{ to: string; amount: string }>;
-}): Promise<UserOpResult>
+}): Promise<BatchTransferResult>
 
 // Get smart account address (deterministic)
 smartWallet.getSmartAccountAddress(): Address
@@ -146,7 +161,7 @@ smartWallet.getSmartAccountAddress(): Address
 ### Token Objects
 
 ```typescript
-import { USDC, USDT, USDS, DAI, PYUSD, FRAX } from 'eth-agent';
+import { USDC, USDT, USDS, DAI, PYUSD, FRAX } from '@lambdaclass/eth-agent';
 
 interface StablecoinInfo {
   symbol: string;           // e.g., "USDC"
@@ -245,39 +260,36 @@ type ErrorCode =
   | 'TIMEOUT';
 ```
 
-## PaymentWatcher
+## Payment Watching
+
+Payment watching is accessed through AgentWallet methods:
 
 ```typescript
-import { PaymentWatcher } from 'eth-agent';
+// Callback-based watching
+const watcher = wallet.onStablecoinReceived(
+  (payment) => {
+    console.log(`Received ${payment.formattedAmount} ${payment.token.symbol}`);
+  },
+  { tokens: [USDC, USDT], pollingInterval: 15000 }
+);
 
-const watcher = new PaymentWatcher({
-  rpc: RPCClient;              // RPC client instance
-  address: Address;            // Address to watch
-  tokens: StablecoinInfo[];    // Tokens to monitor
-  pollInterval?: number;       // Polling interval in ms (default: 12000)
+// Stop when done
+watcher.stop();
+
+// Promise-based waiting
+const payment = await wallet.waitForPayment({
+  token: USDC,
+  minAmount: '100',
+  timeout: 60000,
 });
 
-// Start watching with callback
-watcher.start(callback: (payment: Payment) => void): void
-
-// Stop watching
-watcher.stop(): void
-
-// Wait for specific payment
-watcher.waitForPayment(options: {
-  token?: StablecoinInfo;      // Specific token (optional)
-  from?: Address;              // Specific sender (optional)
-  minAmount?: string | bigint; // Minimum amount (optional)
-  timeout?: number;            // Timeout in ms (optional)
-}): Promise<Payment>
-
-interface Payment {
+interface IncomingPayment {
   token: StablecoinInfo;
   from: Address;
   to: Address;
   amount: bigint;
   formattedAmount: string;     // Human-readable
-  txHash: string;
+  transactionHash: string;
   blockNumber: number;
 }
 ```
@@ -297,12 +309,14 @@ formatUnits(amount: bigint, decimals: number): string
 
 ## AI Integration Tools
 
+Import from the integrations subpath:
+
 ### Anthropic
 
 ```typescript
-import { createAnthropicTools } from 'eth-agent';
+import { anthropicTools } from '@lambdaclass/eth-agent/integrations';
 
-const tools = createAnthropicTools(wallet);
+const tools = anthropicTools(wallet);
 
 tools.definitions    // Tool definitions for Claude API
 tools.execute(name: string, input: object): Promise<ToolResult>
@@ -311,9 +325,9 @@ tools.execute(name: string, input: object): Promise<ToolResult>
 ### OpenAI
 
 ```typescript
-import { createOpenAITools } from 'eth-agent';
+import { openaiTools } from '@lambdaclass/eth-agent/integrations';
 
-const tools = createOpenAITools(wallet);
+const tools = openaiTools(wallet);
 
 tools.definitions    // Function definitions for OpenAI API
 tools.execute(name: string, args: object): Promise<ToolResult>
@@ -322,9 +336,9 @@ tools.execute(name: string, args: object): Promise<ToolResult>
 ### LangChain
 
 ```typescript
-import { createLangChainTools } from 'eth-agent';
+import { langchainTools } from '@lambdaclass/eth-agent/integrations';
 
-const tools = createLangChainTools(wallet);
+const tools = langchainTools(wallet);
 // Returns array of LangChain Tool instances
 ```
 
@@ -332,7 +346,7 @@ const tools = createLangChainTools(wallet);
 
 ```typescript
 // Remote paymaster (calls external service)
-import { createRemotePaymaster } from 'eth-agent';
+import { createRemotePaymaster } from '@lambdaclass/eth-agent';
 
 const paymaster = createRemotePaymaster({
   url: string;              // Paymaster service URL
@@ -340,7 +354,7 @@ const paymaster = createRemotePaymaster({
 });
 
 // Verifying paymaster (uses local signer)
-import { createVerifyingPaymaster } from 'eth-agent';
+import { createVerifyingPaymaster } from '@lambdaclass/eth-agent';
 
 const paymaster = createVerifyingPaymaster({
   address: Address;         // Paymaster contract address

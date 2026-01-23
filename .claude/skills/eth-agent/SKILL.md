@@ -18,13 +18,13 @@ You are an expert in the **eth-agent** library - a TypeScript library that provi
 ## Installation
 
 ```bash
-npm install eth-agent
+npm install @lambdaclass/eth-agent
 ```
 
 ## Quick Start
 
 ```typescript
-import { AgentWallet } from 'eth-agent';
+import { AgentWallet } from '@lambdaclass/eth-agent';
 
 const wallet = AgentWallet.create({
   privateKey: process.env.ETH_PRIVATE_KEY,
@@ -44,7 +44,7 @@ await wallet.send({ to: 'alice.eth', amount: '0.1 ETH' });
 The library has first-class support for major stablecoins across chains:
 
 ```typescript
-import { USDC, USDT, USDS, DAI, PYUSD, FRAX } from 'eth-agent';
+import { USDC, USDT, USDS, DAI, PYUSD, FRAX } from '@lambdaclass/eth-agent';
 
 // Each token has: symbol, name, decimals, and addresses per chain
 // Amounts are always human-readable strings - NO manual decimal handling
@@ -127,7 +127,7 @@ const wallet = AgentWallet.create({
 All methods have `safe*` variants that return Result types instead of throwing:
 
 ```typescript
-import { isOk, isErr, matchResult } from 'eth-agent';
+import { isOk, isErr, matchResult } from '@lambdaclass/eth-agent';
 
 const result = await wallet.safeSendUSDC({ to: 'alice.eth', amount: '100' });
 
@@ -182,7 +182,7 @@ console.log(preview.warnings);             // Non-blocking warnings
 For gasless and batch operations using ERC-4337:
 
 ```typescript
-import { SmartAgentWallet, createRemotePaymaster } from 'eth-agent';
+import { SmartAgentWallet, createRemotePaymaster } from '@lambdaclass/eth-agent';
 
 const smartWallet = SmartAgentWallet.create({
   privateKey: KEY,
@@ -195,7 +195,7 @@ const smartWallet = SmartAgentWallet.create({
 await smartWallet.sendUSDCGasless({ to: 'alice.eth', amount: '100' });
 
 // Batch multiple transfers in one transaction
-await smartWallet.batchTransferStablecoin({
+await smartWallet.sendStablecoinBatch({
   token: USDC,
   transfers: [
     { to: 'alice.eth', amount: '50' },
@@ -210,21 +210,18 @@ await smartWallet.batchTransferStablecoin({
 Monitor incoming payments:
 
 ```typescript
-import { PaymentWatcher, USDC } from 'eth-agent';
+import { USDC, USDT } from '@lambdaclass/eth-agent';
 
-const watcher = new PaymentWatcher({
-  rpc: wallet.rpc,
-  address: wallet.address,
-  tokens: [USDC, USDT],
-});
-
-// Callback-based watching
-watcher.start((payment) => {
+// Use wallet's built-in payment watching methods
+const watcher = wallet.onStablecoinReceived((payment) => {
   console.log(`Received ${payment.formattedAmount} ${payment.token.symbol}`);
-});
+}, { tokens: [USDC, USDT] });
 
-// Wait for specific payment
-const payment = await watcher.waitForPayment({
+// Stop watching when done
+watcher.stop();
+
+// Or wait for a specific payment
+const payment = await wallet.waitForPayment({
   token: USDC,
   minAmount: '100',  // Human-readable
   timeout: 60000,    // 60 seconds
@@ -236,11 +233,12 @@ const payment = await watcher.waitForPayment({
 ### Anthropic (Claude)
 
 ```typescript
-import { AgentWallet, createAnthropicTools } from 'eth-agent';
+import { AgentWallet } from '@lambdaclass/eth-agent';
+import { anthropicTools } from '@lambdaclass/eth-agent/integrations';
 import Anthropic from '@anthropic-ai/sdk';
 
 const wallet = AgentWallet.create({ privateKey: KEY, rpcUrl: URL });
-const tools = createAnthropicTools(wallet);
+const tools = anthropicTools(wallet);
 
 const response = await client.messages.create({
   model: 'claude-sonnet-4-20250514',
@@ -259,18 +257,18 @@ for (const block of response.content) {
 ### OpenAI
 
 ```typescript
-import { createOpenAITools } from 'eth-agent';
+import { openaiTools } from '@lambdaclass/eth-agent/integrations';
 
-const tools = createOpenAITools(wallet);
+const tools = openaiTools(wallet);
 // Use with OpenAI function calling
 ```
 
 ### LangChain
 
 ```typescript
-import { createLangChainTools } from 'eth-agent';
+import { langchainTools } from '@lambdaclass/eth-agent/integrations';
 
-const tools = createLangChainTools(wallet);
+const tools = langchainTools(wallet);
 // Use with LangChain agents
 ```
 
@@ -278,25 +276,25 @@ const tools = createLangChainTools(wallet);
 
 ```typescript
 // Core
-import { AgentWallet, SmartAgentWallet } from 'eth-agent';
+import { AgentWallet, SmartAgentWallet } from '@lambdaclass/eth-agent';
 
 // Stablecoins
-import { USDC, USDT, USDS, DAI, PYUSD, FRAX, STABLECOINS } from 'eth-agent';
+import { USDC, USDT, USDS, DAI, PYUSD, FRAX, STABLECOINS } from '@lambdaclass/eth-agent';
 
 // Result types
-import { ok, err, isOk, isErr, matchResult, unwrap } from 'eth-agent';
+import { ok, err, isOk, isErr, matchResult, unwrap } from '@lambdaclass/eth-agent';
 
 // Units
-import { ETH, GWEI, WEI, parseUnits, formatUnits } from 'eth-agent';
+import { ETH, GWEI, WEI, parseUnits, formatUnits } from '@lambdaclass/eth-agent';
 
-// AI integrations
-import { createAnthropicTools, createOpenAITools, createLangChainTools } from 'eth-agent';
+// AI integrations (subpath import)
+import { anthropicTools, openaiTools, langchainTools } from '@lambdaclass/eth-agent/integrations';
 
-// Payment watching
-import { PaymentWatcher } from 'eth-agent';
+// Payment watching (use wallet methods instead)
+// wallet.onStablecoinReceived() and wallet.waitForPayment()
 
 // Smart accounts
-import { createRemotePaymaster, createVerifyingPaymaster } from 'eth-agent';
+import { createRemotePaymaster, createVerifyingPaymaster } from '@lambdaclass/eth-agent';
 ```
 
 ## Common Patterns
@@ -340,7 +338,7 @@ const wallet = AgentWallet.create({
 ```typescript
 const smartWallet = SmartAgentWallet.create({ ... });
 
-await smartWallet.batchTransferStablecoin({
+await smartWallet.sendStablecoinBatch({
   token: USDC,
   transfers: recipients.map(r => ({ to: r.address, amount: r.amount })),
 });
