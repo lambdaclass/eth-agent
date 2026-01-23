@@ -245,12 +245,17 @@ describe('SessionKeyManager', () => {
         maxTransactions: 2,
       });
 
-      session.nonce = 2; // Simulate 2 transactions already made
-
-      const result = manager.validateAction(session.publicKey, {
-        target: '0x1234567890123456789012345678901234567890',
+      const testHash = '0x' + '11'.repeat(32) as `0x${string}`;
+      const actionParams = {
+        target: '0x1234567890123456789012345678901234567890' as Address,
         value: 0n,
-      });
+      };
+
+      // Sign twice to use up the transaction limit
+      manager.signWithSession(session.publicKey, testHash, actionParams);
+      manager.signWithSession(session.publicKey, testHash, actionParams);
+
+      const result = manager.validateAction(session.publicKey, actionParams);
 
       expect(result.valid).toBe(false);
       expect(result.reason).toBe('Transaction limit reached');
@@ -328,7 +333,9 @@ describe('SessionKeyManager', () => {
         value: 0n,
       });
 
-      expect(session.nonce).toBe(1);
+      // Fetch the session again to get the updated nonce
+      const updatedSession = manager.getSession(session.publicKey);
+      expect(updatedSession?.nonce).toBe(1);
     });
 
     it('throws for unknown session', () => {

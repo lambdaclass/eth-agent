@@ -39,12 +39,12 @@ describe('SmartAccount', () => {
       }),
     } as unknown as BundlerClient;
 
+    const mockPrivateKey = '0x0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef' as Hex;
     mockOwner = {
       address: ownerAddress,
       publicKey: '0x04' + '1234567890abcdef'.repeat(8) as Hex,
-      exportPrivateKey: vi.fn().mockReturnValue(
-        '0x0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef' as Hex
-      ),
+      exportPrivateKey: vi.fn().mockReturnValue(mockPrivateKey),
+      usePrivateKey: vi.fn().mockImplementation(<T>(fn: (key: Hex) => T) => fn(mockPrivateKey)),
       sign: vi.fn().mockReturnValue({
         r: '0x1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef' as Hex,
         s: '0xabcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890' as Hex,

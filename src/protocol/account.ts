@@ -23,21 +23,38 @@ export interface Account {
 }
 
 /**
+ * Interface for accounts that support secure key disposal
+ */
+export interface DisposableAccount extends Account {
+  readonly isDisposed: boolean;
+  usePrivateKey<T>(fn: (key: Hex) => T): T;
+  dispose(): void;
+}
+
+/**
  * EOA (Externally Owned Account)
  * A standard Ethereum account controlled by a private key
  */
-export class EOA implements Account {
+export class EOA implements DisposableAccount {
   readonly address: Address;
   readonly publicKey: Hex;
-  private readonly privateKey: Hex;
+  private readonly _privateKey: Hex;
+  private _disposed = false;
 
   private constructor(privateKey: Hex) {
     if (!isValidPrivateKey(privateKey)) {
       throw new Error('Invalid private key');
     }
-    this.privateKey = privateKey;
+    this._privateKey = privateKey;
     this.publicKey = privateKeyToPublicKey(privateKey, false);
     this.address = privateKeyToAddress(privateKey);
+  }
+
+  /**
+   * Check if the account has been disposed
+   */
+  get isDisposed(): boolean {
+    return this._disposed;
   }
 
   /**
@@ -69,21 +86,62 @@ export class EOA implements Account {
    * Sign a 32-byte hash
    */
   sign(hash: Hash): Signature {
-    return sign(hash, this.privateKey);
+    this.assertNotDisposed();
+    return sign(hash, this._privateKey);
   }
 
   /**
    * Sign a message (EIP-191)
    */
   signMessage(message: string | Uint8Array): Signature {
-    return signMessage(message, this.privateKey);
+    this.assertNotDisposed();
+    return signMessage(message, this._privateKey);
+  }
+
+  /**
+   * Use the private key in a scoped callback.
+   * This is the preferred way to access the key material.
+   *
+   * @param fn - Callback that receives the key as a Hex string
+   * @returns The result of the callback
+   * @throws Error if the account has been disposed
+   */
+  usePrivateKey<T>(fn: (key: Hex) => T): T {
+    this.assertNotDisposed();
+    return fn(this._privateKey);
   }
 
   /**
    * Export the private key (use with caution)
+   *
+   * @deprecated Use `usePrivateKey()` method for scoped access instead.
+   * This method is provided for backward compatibility but should be avoided
+   * as it creates a copy of the key that cannot be securely erased.
    */
   exportPrivateKey(): Hex {
-    return this.privateKey;
+    this.assertNotDisposed();
+    return this._privateKey;
+  }
+
+  /**
+   * Securely dispose of the account.
+   * After calling dispose(), any attempt to use the account will throw an error.
+   *
+   * Note: JavaScript does not provide true secure memory erasure, but this
+   * marks the key as unusable and prevents further access.
+   */
+  dispose(): void {
+    if (this._disposed) return;
+    this._disposed = true;
+  }
+
+  /**
+   * Assert that the account has not been disposed
+   */
+  private assertNotDisposed(): void {
+    if (this._disposed) {
+      throw new Error('Account has been disposed and cannot be used');
+    }
   }
 }
 
