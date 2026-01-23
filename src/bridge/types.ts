@@ -209,6 +209,13 @@ export interface BridgeQuote {
     /** Total fee in USD */
     totalUSD: number;
   };
+  /** Slippage information (for protocols with variable output) */
+  slippage?: {
+    /** Expected slippage in basis points */
+    expectedBps: number;
+    /** Maximum allowed slippage in basis points */
+    maxBps: number;
+  };
   /** Estimated time */
   estimatedTime: {
     /** Minimum time in seconds */
