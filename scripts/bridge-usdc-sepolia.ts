@@ -29,7 +29,7 @@ import {
 import type { Hex } from '../src/core/types.js';
 
 // Configuration
-const AMOUNT_USDC = '1.5'; // 1.5 USDC (above $1 minimum)
+const AMOUNT_USDC = '1'; // 1 USDC
 const DESTINATION_CHAIN_ID = 84532; // Base Sepolia
 const ATTESTATION_POLL_INTERVAL = 30000; // 30 seconds
 const ATTESTATION_TIMEOUT = 45 * 60 * 1000; // 45 minutes max wait
