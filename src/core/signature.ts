@@ -4,9 +4,22 @@
  */
 
 import * as secp256k1 from '@noble/secp256k1';
+import { hmac } from '@noble/hashes/hmac';
+import { sha256 } from '@noble/hashes/sha256';
 import type { Address, Hash, Hex, Signature } from './types.js';
 import { bytesToHex, hexToBytes, padHex, concatHex } from './hex.js';
 import { keccak256 } from './hash.js';
+
+// Configure secp256k1 to use synchronous HMAC (required for signing)
+if (!secp256k1.etc.hmacSha256Sync) {
+  secp256k1.etc.hmacSha256Sync = (key: Uint8Array, ...messages: Uint8Array[]) => {
+    const h = hmac.create(sha256, key);
+    for (const msg of messages) {
+      h.update(msg);
+    }
+    return h.digest();
+  };
+}
 
 /**
  * Generate a random private key
