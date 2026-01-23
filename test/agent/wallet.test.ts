@@ -175,6 +175,24 @@ describe('AgentWallet', () => {
       expect(wallet).toBeInstanceOf(AgentWallet);
     });
 
+    it('uses taiko network', () => {
+      const wallet = AgentWallet.create({
+        privateKey: testPrivateKey,
+        network: 'taiko',
+      });
+
+      expect(wallet).toBeInstanceOf(AgentWallet);
+    });
+
+    it('uses taiko-hekla testnet', () => {
+      const wallet = AgentWallet.create({
+        privateKey: testPrivateKey,
+        network: 'taiko-hekla',
+      });
+
+      expect(wallet).toBeInstanceOf(AgentWallet);
+    });
+
     it('configures trusted addresses', () => {
       const wallet = AgentWallet.create({
         privateKey: testPrivateKey,

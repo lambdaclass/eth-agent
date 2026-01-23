@@ -25,6 +25,7 @@ export const USDC: StablecoinInfo = {
     43114: '0xB97EF9Ef8734C71904D8002F8b6Bc66Dd9c48a6E',   // Avalanche
     56: '0x8AC76a51cc950d9822D68b83fE1Ad97B32Cd580d',      // BNB Chain
     11155111: '0x1c7D4B196Cb0C7B01d743Fbc6116a902379C7238', // Sepolia
+    167000: '0x07d83526730c7438048d55a4fc0b850e2aab6f0b',   // Taiko Mainnet
   },
 };
 
@@ -43,6 +44,7 @@ export const USDT: StablecoinInfo = {
     8453: '0xfde4C96c8593536E31F229EA8f37b2ADa2699bb2',    // Base
     43114: '0x9702230A8Ea53601f5cD2dc00fDBc13d4dF4A8c7',   // Avalanche
     56: '0x55d398326f99059fF775485246999027B3197955',      // BNB Chain
+    167000: '0x2DEF195713CF4a606B49D07E520e22C17899a736',   // Taiko Mainnet
   },
 };
 

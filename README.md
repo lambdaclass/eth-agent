@@ -90,8 +90,8 @@ const balances = await wallet.getStablecoinBalances();
 | Token | Symbol | Chains |
 |-------|--------|--------|
 | Ether | `ETH` | Ethereum, Arbitrum, Optimism, Base, Polygon, Avalanche |
-| USD Coin | `USDC` | Ethereum, Arbitrum, Optimism, Base, Polygon, Avalanche |
-| Tether | `USDT` | Ethereum, Arbitrum, Optimism, Base, Polygon, Avalanche |
+| USD Coin | `USDC` | Ethereum, Arbitrum, Optimism, Base, Polygon, Avalanche, Taiko, Scroll, Linea, zkSync Era |
+| Tether | `USDT` | Ethereum, Arbitrum, Optimism, Base, Polygon, Avalanche, Taiko, Scroll, Linea, zkSync Era |
 | Sky USD | `USDS` | Ethereum, Base |
 | PayPal USD | `PYUSD` | Ethereum |
 | Frax | `FRAX` | Ethereum, Arbitrum, Optimism, Polygon |

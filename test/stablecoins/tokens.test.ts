@@ -109,6 +109,25 @@ describe('Stablecoin Tokens', () => {
     });
   });
 
+  describe('Taiko network support', () => {
+    it('returns USDC address for Taiko mainnet', () => {
+      const address = getStablecoinAddress(USDC, 167000);
+      expect(address).toBe('0x07d83526730c7438048d55a4fc0b850e2aab6f0b');
+    });
+
+    it('returns USDT address for Taiko mainnet', () => {
+      const address = getStablecoinAddress(USDT, 167000);
+      expect(address).toBe('0x2DEF195713CF4a606B49D07E520e22C17899a736');
+    });
+
+    it('returns stablecoins available on Taiko', () => {
+      const stablecoins = getStablecoinsForChain(167000);
+      expect(stablecoins.has('USDC')).toBe(true);
+      expect(stablecoins.has('USDT')).toBe(true);
+      expect(stablecoins.has('DAI')).toBe(false);
+    });
+  });
+
   describe('isKnownStablecoin', () => {
     it('identifies USDC on mainnet', () => {
       const info = isKnownStablecoin('0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48', 1);

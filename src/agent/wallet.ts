@@ -78,7 +78,7 @@ export interface AgentWalletConfig {
   privateKey?: Hex | string;
 
   // Network
-  network?: 'mainnet' | 'sepolia' | 'goerli' | string;
+  network?: 'mainnet' | 'sepolia' | 'goerli' | 'taiko' | 'taiko-hekla' | string;
   rpcUrl?: string;
 
   // Safety
@@ -371,6 +371,12 @@ export class AgentWallet {
           break;
         case 'goerli':
           rpcUrl = 'https://goerli.drpc.org';
+          break;
+        case 'taiko':
+          rpcUrl = 'https://rpc.mainnet.taiko.xyz';
+          break;
+        case 'taiko-hekla':
+          rpcUrl = 'https://rpc.hekla.taiko.xyz';
           break;
         default:
           rpcUrl = config.network ?? 'https://eth.llamarpc.com';
