@@ -197,6 +197,9 @@ export {
   defineAbi,
   isFunctionName,
 } from './abi-types.js';
+
+// Cache utilities
+export { LRUCache } from './cache.js';
 export type {
   TypedAbi,
   TypedAbiFunction,

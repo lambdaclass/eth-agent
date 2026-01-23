@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { ENS, namehash, dnsEncode, isENSName, resolveAddress } from '../../src/protocol/ens.js';
 import type { RPCClient } from '../../src/protocol/rpc.js';
 import type { Address, Hash, Hex } from '../../src/core/types.js';
@@ -365,6 +365,168 @@ describe('ENS', () => {
     it('returns false for names with invalid characters', () => {
       expect(isENSName('foo@bar.eth')).toBe(false);
       expect(isENSName('foo bar.eth')).toBe(false);
+    });
+  });
+
+  describe('caching', () => {
+    beforeEach(() => {
+      vi.useFakeTimers();
+    });
+
+    afterEach(() => {
+      vi.useRealTimers();
+    });
+
+    it('returns cached result on second call', async () => {
+      vi.mocked(mockRpc.call)
+        .mockResolvedValueOnce('0x000000000000000000000000abcdefabcdefabcdefabcdefabcdefabcdefabcd' as Hex)
+        .mockResolvedValueOnce(`0x000000000000000000000000${testAddress.slice(2)}` as Hex);
+
+      const ens = new ENS(mockRpc);
+
+      // First call - makes RPC calls
+      const result1 = await ens.resolve('vitalik.eth');
+      expect(result1).toBe(testAddress);
+      expect(mockRpc.call).toHaveBeenCalledTimes(2);
+
+      // Second call - should use cache
+      const result2 = await ens.resolve('vitalik.eth');
+      expect(result2).toBe(testAddress);
+      expect(mockRpc.call).toHaveBeenCalledTimes(2); // No additional calls
+    });
+
+    it('normalizes name for caching (case-insensitive)', async () => {
+      vi.mocked(mockRpc.call)
+        .mockResolvedValueOnce('0x000000000000000000000000abcdefabcdefabcdefabcdefabcdefabcdefabcd' as Hex)
+        .mockResolvedValueOnce(`0x000000000000000000000000${testAddress.slice(2)}` as Hex);
+
+      const ens = new ENS(mockRpc);
+
+      await ens.resolve('Vitalik.ETH');
+      await ens.resolve('vitalik.eth');
+      await ens.resolve('VITALIK.ETH');
+
+      // All should use the same cache entry
+      expect(mockRpc.call).toHaveBeenCalledTimes(2);
+    });
+
+    it('caches null results', async () => {
+      vi.mocked(mockRpc.call).mockResolvedValue('0x0000000000000000000000000000000000000000000000000000000000000000' as Hex);
+
+      const ens = new ENS(mockRpc);
+
+      const result1 = await ens.resolve('nonexistent.eth');
+      expect(result1).toBeNull();
+      expect(mockRpc.call).toHaveBeenCalledTimes(1);
+
+      const result2 = await ens.resolve('nonexistent.eth');
+      expect(result2).toBeNull();
+      expect(mockRpc.call).toHaveBeenCalledTimes(1); // No additional calls
+    });
+
+    it('skipCache bypasses cache', async () => {
+      vi.mocked(mockRpc.call)
+        .mockResolvedValueOnce('0x000000000000000000000000abcdefabcdefabcdefabcdefabcdefabcdefabcd' as Hex)
+        .mockResolvedValueOnce(`0x000000000000000000000000${testAddress.slice(2)}` as Hex)
+        .mockResolvedValueOnce('0x000000000000000000000000abcdefabcdefabcdefabcdefabcdefabcdefabcd' as Hex)
+        .mockResolvedValueOnce(`0x000000000000000000000000${testAddress.slice(2)}` as Hex);
+
+      const ens = new ENS(mockRpc);
+
+      await ens.resolve('vitalik.eth');
+      expect(mockRpc.call).toHaveBeenCalledTimes(2);
+
+      // With skipCache, should make new RPC calls
+      await ens.resolve('vitalik.eth', { skipCache: true });
+      expect(mockRpc.call).toHaveBeenCalledTimes(4);
+    });
+
+    it('cache expires after TTL', async () => {
+      vi.mocked(mockRpc.call)
+        .mockResolvedValueOnce('0x000000000000000000000000abcdefabcdefabcdefabcdefabcdefabcdefabcd' as Hex)
+        .mockResolvedValueOnce(`0x000000000000000000000000${testAddress.slice(2)}` as Hex)
+        .mockResolvedValueOnce('0x000000000000000000000000abcdefabcdefabcdefabcdefabcdefabcdefabcd' as Hex)
+        .mockResolvedValueOnce(`0x000000000000000000000000${testAddress.slice(2)}` as Hex);
+
+      // Create ENS with 1 second TTL
+      const ens = new ENS(mockRpc, 100, 1000);
+
+      await ens.resolve('vitalik.eth');
+      expect(mockRpc.call).toHaveBeenCalledTimes(2);
+
+      // Advance time past TTL
+      vi.advanceTimersByTime(1001);
+
+      // Should make new RPC calls
+      await ens.resolve('vitalik.eth');
+      expect(mockRpc.call).toHaveBeenCalledTimes(4);
+    });
+
+    it('clearCache() empties the cache', async () => {
+      vi.mocked(mockRpc.call)
+        .mockResolvedValueOnce('0x000000000000000000000000abcdefabcdefabcdefabcdefabcdefabcdefabcd' as Hex)
+        .mockResolvedValueOnce(`0x000000000000000000000000${testAddress.slice(2)}` as Hex)
+        .mockResolvedValueOnce('0x000000000000000000000000abcdefabcdefabcdefabcdefabcdefabcdefabcd' as Hex)
+        .mockResolvedValueOnce(`0x000000000000000000000000${testAddress.slice(2)}` as Hex);
+
+      const ens = new ENS(mockRpc);
+
+      await ens.resolve('vitalik.eth');
+      expect(mockRpc.call).toHaveBeenCalledTimes(2);
+
+      ens.clearCache();
+
+      // Should make new RPC calls after clear
+      await ens.resolve('vitalik.eth');
+      expect(mockRpc.call).toHaveBeenCalledTimes(4);
+    });
+
+    it('invalidateCache() removes specific entry', async () => {
+      vi.mocked(mockRpc.call)
+        .mockResolvedValueOnce('0x000000000000000000000000abcdefabcdefabcdefabcdefabcdefabcdefabcd' as Hex)
+        .mockResolvedValueOnce(`0x000000000000000000000000${testAddress.slice(2)}` as Hex)
+        .mockResolvedValueOnce('0x000000000000000000000000abcdefabcdefabcdefabcdefabcdefabcdefabcd' as Hex)
+        .mockResolvedValueOnce(`0x000000000000000000000000${testAddress.slice(2)}` as Hex)
+        .mockResolvedValueOnce('0x000000000000000000000000abcdefabcdefabcdefabcdefabcdefabcdefabcd' as Hex)
+        .mockResolvedValueOnce(`0x000000000000000000000000${testAddress.slice(2)}` as Hex);
+
+      const ens = new ENS(mockRpc);
+
+      await ens.resolve('vitalik.eth');
+      await ens.resolve('nick.eth');
+      expect(mockRpc.call).toHaveBeenCalledTimes(4);
+
+      // Invalidate only vitalik.eth
+      const invalidated = ens.invalidateCache('vitalik.eth');
+      expect(invalidated).toBe(true);
+
+      // vitalik.eth should make new calls
+      await ens.resolve('vitalik.eth');
+      expect(mockRpc.call).toHaveBeenCalledTimes(6);
+
+      // nick.eth should still be cached
+      await ens.resolve('nick.eth');
+      expect(mockRpc.call).toHaveBeenCalledTimes(6);
+    });
+
+    it('does not cache on RPC error (allows retry)', async () => {
+      vi.mocked(mockRpc.call)
+        .mockResolvedValueOnce('0x000000000000000000000000abcdefabcdefabcdefabcdefabcdefabcdefabcd' as Hex)
+        .mockRejectedValueOnce(new Error('RPC error'))
+        .mockResolvedValueOnce('0x000000000000000000000000abcdefabcdefabcdefabcdefabcdefabcdefabcd' as Hex)
+        .mockResolvedValueOnce(`0x000000000000000000000000${testAddress.slice(2)}` as Hex);
+
+      const ens = new ENS(mockRpc);
+
+      // First call fails
+      const result1 = await ens.resolve('vitalik.eth');
+      expect(result1).toBeNull();
+      expect(mockRpc.call).toHaveBeenCalledTimes(2);
+
+      // Retry should make new calls (error not cached)
+      const result2 = await ens.resolve('vitalik.eth');
+      expect(result2).toBe(testAddress);
+      expect(mockRpc.call).toHaveBeenCalledTimes(4);
     });
   });
 
