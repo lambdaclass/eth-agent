@@ -5,7 +5,7 @@
 [![Coverage](https://img.shields.io/badge/coverage-95%25-brightgreen.svg)](https://github.com/lambdaclass/eth-agent)
 [![License](https://img.shields.io/badge/license-MIT%2FApache--2.0-green.svg)](LICENSE-MIT)
 
-**The simplest, safest way for AI agents to use Ethereum and send stablecoins.**
+**The simplest, safest way for AI agents to use Ethereum. Send stablecoins in one line of code—with spending limits and human approval flows built in.**
 
 ```typescript
 import { AgentWallet } from '@lambdaclass/eth-agent';
