@@ -123,6 +123,12 @@ export function formatUnits(value: bigint, decimals: number): string {
   const negative = value < 0n;
   const abs = negative ? -value : value;
 
+  // Handle decimals=0 case separately to avoid slice(0, -0) issue
+  if (decimals === 0) {
+    const result = abs.toString();
+    return negative ? `-${result}` : result;
+  }
+
   const str = abs.toString().padStart(decimals + 1, '0');
   const intPart = str.slice(0, -decimals) || '0';
   const fracPart = str.slice(-decimals);
