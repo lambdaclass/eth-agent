@@ -7,6 +7,7 @@ import type { Address, Hash, Hex } from '../core/types.js';
 import { keccak256 } from '../core/hash.js';
 import { encodeFunctionCall, decodeFunctionResult } from '../core/abi.js';
 import { bytesToHex, concatHex } from '../core/hex.js';
+import { LRUCache } from '../core/cache.js';
 import type { RPCClient } from './rpc.js';
 
 // ENS Registry address (same on mainnet, testnets)
@@ -16,25 +17,67 @@ const ENS_REGISTRY = '0x00000000000C2E074eC69A0dFb2997BA6C7d2e1e' as Address;
 const ZERO_ADDRESS = '0x0000000000000000000000000000000000000000' as Address;
 
 /**
+ * Options for ENS resolution
+ */
+export interface ENSResolveOptions {
+  /** Skip cache lookup and force fresh resolution */
+  skipCache?: boolean;
+  /** Custom TTL for this resolution in milliseconds */
+  ttl?: number;
+}
+
+/**
  * ENS client for name resolution
  */
 export class ENS {
-  constructor(private readonly rpc: RPCClient) {}
+  private readonly addressCache: LRUCache<string, Address | null>;
+
+  /**
+   * Create a new ENS client
+   * @param rpc RPC client for Ethereum calls
+   * @param cacheSize Maximum number of cached entries (default: 100)
+   * @param cacheTTL Default cache TTL in milliseconds (default: 300000 = 5 minutes)
+   */
+  constructor(
+    private readonly rpc: RPCClient,
+    cacheSize = 100,
+    cacheTTL = 300000
+  ) {
+    this.addressCache = new LRUCache<string, Address | null>(cacheSize, cacheTTL);
+  }
 
   /**
    * Resolve an ENS name to an address
+   * Results are cached to prevent TOCTOU vulnerabilities and reduce RPC calls
+   * @param name ENS name to resolve (e.g., "vitalik.eth" or "vitalik")
+   * @param options Optional resolution options
    */
-  async resolve(name: string): Promise<Address | null> {
+  async resolve(name: string, options?: ENSResolveOptions): Promise<Address | null> {
     // Validate name
     if (!name.endsWith('.eth') && !name.includes('.')) {
       name = `${name}.eth`;
+    }
+
+    // Normalize for cache key
+    const cacheKey = name.toLowerCase();
+
+    // Check cache first (unless skipCache is set)
+    if (options?.skipCache !== true) {
+      const cached = this.addressCache.get(cacheKey);
+      if (cached !== undefined) {
+        return cached;
+      }
     }
 
     const node = namehash(name);
 
     // Get resolver for this name
     const resolver = await this.getResolver(node);
-    if (!resolver) return null;
+    if (!resolver) {
+      // Cache null results to prevent repeated lookups for non-existent names
+      this.addressCache.set(cacheKey, null, options?.ttl);
+      return null;
+    }
 
     // Call resolver's addr(bytes32) function
     const data = encodeFunctionCall('addr(bytes32)', [node]);
@@ -43,15 +86,39 @@ export class ENS {
       const result = await this.rpc.call({ to: resolver, data });
 
       if (result === '0x' || result === '0x0000000000000000000000000000000000000000000000000000000000000000') {
+        this.addressCache.set(cacheKey, null, options?.ttl);
         return null;
       }
 
       // Decode address (last 20 bytes of 32-byte response)
       const decoded = decodeFunctionResult('addr(bytes32) returns (address)', result);
-      return decoded[0] as Address;
+      const address = decoded[0] as Address;
+
+      // Cache the result
+      this.addressCache.set(cacheKey, address, options?.ttl);
+
+      return address;
     } catch {
+      // Don't cache errors - allow retry
       return null;
     }
+  }
+
+  /**
+   * Clear the address resolution cache
+   */
+  clearCache(): void {
+    this.addressCache.clear();
+  }
+
+  /**
+   * Invalidate a specific name from the cache
+   */
+  invalidateCache(name: string): boolean {
+    if (!name.endsWith('.eth') && !name.includes('.')) {
+      name = `${name}.eth`;
+    }
+    return this.addressCache.delete(name.toLowerCase());
   }
 
   /**
