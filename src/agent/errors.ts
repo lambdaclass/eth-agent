@@ -302,15 +302,15 @@ export class StablecoinLimitError extends LimitError {
     resetsAt?: Date;
   }) {
     const typeMessages = {
-      transaction: `${config.token} transaction amount ${config.requested} exceeds per-transaction limit of $${config.limit}`,
-      hourly: `${config.token} transaction would exceed hourly limit. Remaining: $${config.remaining}`,
-      daily: `${config.token} transaction would exceed daily limit. Remaining: $${config.remaining}`,
+      transaction: `${config.token} transaction amount ${config.requested} exceeds per-transaction limit of $${config.limit ?? 'unknown'}`,
+      hourly: `${config.token} transaction would exceed hourly limit. Remaining: $${config.remaining ?? '0'}`,
+      daily: `${config.token} transaction would exceed daily limit. Remaining: $${config.remaining ?? '0'}`,
     };
 
     const typeSuggestions = {
-      transaction: `Reduce amount to $${config.limit} or less`,
-      hourly: `Reduce amount to $${config.remaining} or wait until ${config.resetsAt?.toISOString() ?? 'limit resets'}`,
-      daily: `Reduce amount to $${config.remaining} or wait until ${config.resetsAt?.toISOString() ?? 'limit resets'}`,
+      transaction: `Reduce amount to $${config.limit ?? 'unknown'} or less`,
+      hourly: `Reduce amount to $${config.remaining ?? '0'} or wait until ${config.resetsAt?.toISOString() ?? 'limit resets'}`,
+      daily: `Reduce amount to $${config.remaining ?? '0'} or wait until ${config.resetsAt?.toISOString() ?? 'limit resets'}`,
     };
 
     super({
@@ -351,7 +351,7 @@ export class ApprovalTimeoutError extends ApprovalError {
   constructor(timeout: number) {
     super({
       code: 'APPROVAL_TIMEOUT',
-      message: `Approval request timed out after ${timeout}ms`,
+      message: `Approval request timed out after ${String(timeout)}ms`,
       details: { timeout },
       suggestion: 'Retry the transaction to request approval again',
       retryable: true,
@@ -429,5 +429,59 @@ export class EmergencyStopError extends EthAgentError {
       retryable: false,
     });
     this.name = 'EmergencyStopError';
+  }
+}
+
+// ============ Bridge Errors ============
+
+export class BridgeLimitError extends EthAgentError {
+  constructor(config: {
+    type: 'transaction' | 'daily';
+    requested: string;
+    limit: string;
+    remaining?: string;
+    resetsAt?: Date;
+  }) {
+    const typeMessages = {
+      transaction: `Bridge amount $${config.requested} exceeds per-transaction limit of $${config.limit}`,
+      daily: `Bridge amount would exceed daily limit. Remaining: $${config.remaining ?? '0'}`,
+    };
+
+    const typeSuggestions = {
+      transaction: `Reduce bridge amount to $${config.limit} or less`,
+      daily: config.resetsAt
+        ? `Reduce amount to $${config.remaining ?? '0'} or wait until ${config.resetsAt.toISOString()}`
+        : `Reduce amount to $${config.remaining ?? '0'} or wait for limit to reset`,
+    };
+
+    super({
+      code: `BRIDGE_${config.type.toUpperCase()}_LIMIT_EXCEEDED`,
+      message: typeMessages[config.type],
+      details: config,
+      suggestion: typeSuggestions[config.type],
+      retryable: config.type === 'daily',
+      retryAfter: config.resetsAt ? config.resetsAt.getTime() - Date.now() : undefined,
+    });
+    this.name = 'BridgeLimitError';
+  }
+}
+
+export class BridgeDestinationNotAllowedError extends EthAgentError {
+  constructor(config: {
+    destinationChainId: number;
+    allowedDestinations?: number[];
+  }) {
+    const allowedInfo = config.allowedDestinations
+      ? `. Allowed destinations: ${config.allowedDestinations.join(', ')}`
+      : '';
+
+    super({
+      code: 'BRIDGE_DESTINATION_NOT_ALLOWED',
+      message: `Destination chain ${String(config.destinationChainId)} is not in allowed list${allowedInfo}`,
+      details: config,
+      suggestion: 'Choose an allowed destination chain or update bridge limits configuration',
+      retryable: false,
+    });
+    this.name = 'BridgeDestinationNotAllowedError';
   }
 }
