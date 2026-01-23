@@ -57,12 +57,6 @@ await wallet.sendUSDC({ to: 'merchant.eth', amount: '100' });
 | ENS resolution | Automatic | Manual |
 | Error recovery | Structured | Exceptions |
 
-## Install
-
-```bash
-npm install @lambdaclass/eth-agent
-```
-
 ## Stablecoins
 
 Built-in support for major stablecoins with automatic decimals and multi-chain addresses:
