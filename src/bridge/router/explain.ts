@@ -4,12 +4,10 @@
  */
 
 import type {
-  BridgeQuote,
   BridgeRouteComparison,
   UnifiedBridgeResult,
   UnifiedBridgeStatus,
   BridgePreview,
-  RoutePreference,
   BridgeProtocolInfo,
 } from '../types.js';
 

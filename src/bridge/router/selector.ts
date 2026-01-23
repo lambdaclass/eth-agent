@@ -62,7 +62,7 @@ export class RouteSelector {
 
     return {
       quotes: sortedQuotes,
-      recommended: sortedQuotes[0],
+      recommended: sortedQuotes[0] ?? null,
       recommendation,
     };
   }
@@ -104,7 +104,7 @@ export class RouteSelector {
    * Get scoring weights based on preference
    */
   private getWeights(preference: RoutePreference): ScoringWeights {
-    return DEFAULT_WEIGHTS[preference.priority];
+    return DEFAULT_WEIGHTS[preference.priority] ?? DEFAULT_WEIGHTS.cost;
   }
 
   /**
@@ -125,8 +125,9 @@ export class RouteSelector {
    * Score a quote based on speed (faster = higher score)
    */
   private scoreSpeed(quote: BridgeQuote, preference: RoutePreference): number {
-    const avgTimeSeconds =
-      (quote.estimatedTime.minSeconds + quote.estimatedTime.maxSeconds) / 2;
+    const minSeconds = quote.estimatedTime.minSeconds ?? quote.estimatedTime.seconds ?? 600;
+    const maxSeconds = quote.estimatedTime.maxSeconds ?? quote.estimatedTime.seconds ?? 1800;
+    const avgTimeSeconds = (minSeconds + maxSeconds) / 2;
 
     // Check if quote exceeds max time constraint
     if (preference.maxTimeMinutes !== undefined) {
@@ -170,7 +171,7 @@ export class RouteSelector {
     scoredQuotes: ScoredQuote[],
     preference: RoutePreference
   ): { reason: string; savings?: string } {
-    if (scoredQuotes.length === 0) {
+    if (scoredQuotes.length === 0 || !scoredQuotes[0]) {
       return { reason: 'No routes available' };
     }
 
@@ -188,9 +189,8 @@ export class RouteSelector {
 
     // Add savings comparison if multiple quotes
     let savings: string | undefined;
-    if (scoredQuotes.length > 1) {
-      const secondBest = scoredQuotes[1];
-
+    const secondBest = scoredQuotes[1];
+    if (scoredQuotes.length > 1 && secondBest) {
       // Calculate savings based on priority
       switch (preference.priority) {
         case 'cost': {
@@ -201,8 +201,9 @@ export class RouteSelector {
           break;
         }
         case 'speed': {
-          const timeSavings =
-            secondBest.quote.estimatedTime.minSeconds - quote.estimatedTime.minSeconds;
+          const secondMinSeconds = secondBest.quote.estimatedTime.minSeconds ?? secondBest.quote.estimatedTime.seconds ?? 600;
+          const bestMinSeconds = quote.estimatedTime.minSeconds ?? quote.estimatedTime.seconds ?? 600;
+          const timeSavings = secondMinSeconds - bestMinSeconds;
           if (timeSavings > 60) {
             savings = `${String(Math.round(timeSavings / 60))} min faster than ${secondBest.quote.protocol}`;
           }
@@ -234,7 +235,8 @@ export class RouteSelector {
       // Check max time constraint
       if (preference.maxTimeMinutes !== undefined) {
         const maxTimeSeconds = preference.maxTimeMinutes * 60;
-        if (quote.estimatedTime.maxSeconds > maxTimeSeconds) {
+        const quoteMaxSeconds = quote.estimatedTime.maxSeconds ?? quote.estimatedTime.seconds ?? 1800;
+        if (quoteMaxSeconds > maxTimeSeconds) {
           return false;
         }
       }

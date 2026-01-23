@@ -4,9 +4,7 @@
  */
 
 import type { Hex } from '../../core/types.js';
-import type { RPCClient } from '../../protocol/rpc.js';
-import type { Account } from '../../protocol/account.js';
-import { USDC, parseStablecoinAmount, formatStablecoinAmount } from '../../stablecoins/index.js';
+import { USDC, parseStablecoinAmount } from '../../stablecoins/index.js';
 import {
   type BridgeProtocolInfo,
   type BridgeRequest,
@@ -15,7 +13,7 @@ import {
   type BridgeStatusResult,
 } from '../types.js';
 import { CCTPBridge, type CCTPBridgeConfig } from '../cctp/cctp-bridge.js';
-import { getSupportedCCTPChains, getCCTPConfig, getChainName, isTestnet } from '../constants.js';
+import { getSupportedCCTPChains, getCCTPConfig, getChainName } from '../constants.js';
 import { BaseBridgeAdapter, type BaseAdapterConfig } from './base-adapter.js';
 
 /**
@@ -43,12 +41,9 @@ export class CCTPAdapter extends BaseBridgeAdapter {
   };
 
   private readonly cctpBridge: CCTPBridge;
-  private readonly testnet?: boolean;
 
   constructor(config: CCTPAdapterConfig) {
     super(config);
-
-    this.testnet = config.testnet;
 
     // Create the underlying CCTP bridge
     this.cctpBridge = new CCTPBridge({
@@ -121,11 +116,11 @@ export class CCTPAdapter extends BaseBridgeAdapter {
         totalUSD: this.estimateGasInUSD(gasFee),
       },
       estimatedTime: {
-        minSeconds: this.info.estimatedTimeSeconds.min,
-        maxSeconds: this.info.estimatedTimeSeconds.max,
+        minSeconds: typeof this.info.estimatedTimeSeconds === 'object' ? this.info.estimatedTimeSeconds.min : 600,
+        maxSeconds: typeof this.info.estimatedTimeSeconds === 'object' ? this.info.estimatedTimeSeconds.max : 1800,
         display: this.formatTimeEstimate(
-          this.info.estimatedTimeSeconds.min,
-          this.info.estimatedTimeSeconds.max
+          typeof this.info.estimatedTimeSeconds === 'object' ? this.info.estimatedTimeSeconds.min : 600,
+          typeof this.info.estimatedTimeSeconds === 'object' ? this.info.estimatedTimeSeconds.max : 1800
         ),
       },
       route: {
@@ -140,7 +135,7 @@ export class CCTPAdapter extends BaseBridgeAdapter {
   /**
    * Estimate fees for a request
    */
-  async estimateFees(request: BridgeRequest): Promise<{ protocolFee: bigint; gasFee: bigint }> {
+  async estimateFees(_request: BridgeRequest): Promise<{ protocolFee: bigint; gasFee: bigint }> {
     // CCTP has no protocol fees
     const protocolFee = 0n;
     const gasFee = await this.estimateGasFee();

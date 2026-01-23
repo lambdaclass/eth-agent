@@ -85,7 +85,5 @@ export {
   OperationPolicyError,
   OperationNotAllowedError,
   EmergencyStopError,
-  BridgeLimitError,
-  BridgeDestinationNotAllowedError,
 } from './errors.js';
 export type { ErrorDetails } from './errors.js';

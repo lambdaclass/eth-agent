@@ -261,8 +261,6 @@ export {
   OperationPolicyError,
   OperationNotAllowedError,
   EmergencyStopError,
-  BridgeLimitError,
-  BridgeDestinationNotAllowedError,
 } from './agent/index.js';
 
 // Bridge module
@@ -309,6 +307,11 @@ export {
   BridgeSameChainError,
   BridgeCompletionError,
   BridgeApprovalError,
+  BridgeLimitError,
+  BridgeDestinationNotAllowedError,
+  BridgeNoRouteError,
+  BridgeAllRoutesFailed,
+  BridgeProtocolUnavailableError,
 } from './bridge/index.js';
 
 // Safety presets

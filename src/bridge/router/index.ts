@@ -3,7 +3,7 @@
  * Aggregates multiple bridge protocols and selects optimal routes
  */
 
-import type { Address, Hash, Hex } from '../../core/types.js';
+import type { Hash, Hex } from '../../core/types.js';
 import type { Account } from '../../protocol/account.js';
 import type { RPCClient } from '../../protocol/rpc.js';
 import type { LimitsEngine } from '../../agent/limits.js';
@@ -21,18 +21,16 @@ import {
 } from '../types.js';
 import {
   BridgeNoRouteError,
-  BridgeAllRoutesFailed,
   BridgeProtocolUnavailableError,
 } from '../errors.js';
 import { getChainName } from '../constants.js';
-import { CCTPAdapter, type CCTPAdapterConfig } from '../protocols/cctp-adapter.js';
+import { CCTPAdapter } from '../protocols/cctp-adapter.js';
 import { RouteSelector } from './selector.js';
 import { ExplainBridge } from './explain.js';
 import {
   type BridgeRouterConfig,
   type RouteInfo,
   type ProtocolRegistryEntry,
-  type ProtocolFilter,
   type WaitOptions,
   generateTrackingId,
 } from './types.js';
@@ -310,7 +308,7 @@ export class BridgeRouter {
     const cctpAdapter = this.protocols.get('CCTP');
     if (cctpAdapter) {
       try {
-        const preview = await (cctpAdapter.protocol as CCTPAdapter)
+        const preview = await (cctpAdapter.protocol as unknown as CCTPAdapter)
           .getUnderlyingBridge()
           .previewBridge(request);
         balance = preview.balance.raw;
@@ -616,8 +614,8 @@ export class BridgeRouter {
     );
 
     for (let i = 0; i < results.length; i++) {
-      const result = results[i];
-      const protocol = protocols[i];
+      const result = results[i]!;
+      const protocol = protocols[i]!;
 
       if (result.status === 'fulfilled') {
         quotes.push(result.value);

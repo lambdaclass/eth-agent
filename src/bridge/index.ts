@@ -40,6 +40,9 @@ export {
   BridgeSameChainError,
   BridgeCompletionError,
   BridgeApprovalError,
+  BridgeNoRouteError,
+  BridgeAllRoutesFailed,
+  BridgeProtocolUnavailableError,
 } from './errors.js';
 
 // CCTP implementation

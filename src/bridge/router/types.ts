@@ -3,7 +3,6 @@
  * Internal types used by the route selection algorithm
  */
 
-import type { Address } from '../../core/types.js';
 import type { Account } from '../../protocol/account.js';
 import type { RPCClient } from '../../protocol/rpc.js';
 import type { LimitsEngine } from '../../agent/limits.js';
@@ -12,7 +11,6 @@ import type {
   BridgeProtocolV2,
   BridgeQuote,
   RoutePreference,
-  BridgeRequest,
 } from '../types.js';
 
 /**
