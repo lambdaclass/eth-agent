@@ -211,6 +211,33 @@ const ERC20_APPROVE_ABI = [
 ] as const;
 
 /**
+ * WETH ABI - For wrapping/unwrapping ETH
+ */
+export const WETH_ABI = [
+  {
+    name: 'deposit',
+    type: 'function',
+    stateMutability: 'payable',
+    inputs: [],
+    outputs: [],
+  },
+  {
+    name: 'withdraw',
+    type: 'function',
+    stateMutability: 'nonpayable',
+    inputs: [{ name: 'wad', type: 'uint256' }],
+    outputs: [],
+  },
+  {
+    name: 'balanceOf',
+    type: 'function',
+    stateMutability: 'view',
+    inputs: [{ name: 'account', type: 'address' }],
+    outputs: [{ name: '', type: 'uint256' }],
+  },
+] as const;
+
+/**
  * Swap quote result
  */
 export interface SwapQuote {
@@ -649,6 +676,124 @@ export class UniswapClient {
     const sqrtPriceLimitHex = (params.sqrtPriceLimitX96 ?? 0n).toString(16).padStart(64, '0');
 
     return (selector + tokenInPadded + tokenOutPadded + feeHex + recipientPadded + amountInHex + amountOutMinHex + sqrtPriceLimitHex) as Hex;
+  }
+
+  /**
+   * Wrap ETH to WETH
+   * This is a direct call to the WETH contract, not a Uniswap swap
+   */
+  async wrapETH(amount: bigint): Promise<SwapExecutionResult> {
+    if (!this.account) {
+      throw new Error('Account required for wrapping ETH');
+    }
+
+    const wethAddress = await this.getWETHAddress();
+    const chainId = await this.getChainId();
+
+    // Encode WETH deposit() call - just the function selector, no params
+    const depositData = '0xd0e30db0' as Hex; // deposit()
+
+    // Estimate gas
+    const gasEstimate = await this.gasOracle.estimateGas({
+      from: this.account.address,
+      to: wethAddress,
+      data: depositData,
+      value: amount,
+    });
+
+    // Get nonce
+    const nonce = await this.rpc.getTransactionCount(this.account.address);
+
+    // Build transaction
+    let builder = TransactionBuilder.create()
+      .to(wethAddress)
+      .value(amount)
+      .data(depositData)
+      .nonce(nonce)
+      .chainId(chainId)
+      .gasLimit(gasEstimate.gasLimit * 12n / 10n);
+
+    if (gasEstimate.maxFeePerGas) {
+      builder = builder
+        .maxFeePerGas(gasEstimate.maxFeePerGas)
+        .maxPriorityFeePerGas(gasEstimate.maxPriorityFeePerGas ?? 0n);
+    } else if (gasEstimate.gasPrice) {
+      builder = builder.gasPrice(gasEstimate.gasPrice);
+    }
+
+    // Sign and send
+    const signed = builder.sign(this.account);
+    const hash = await this.rpc.sendRawTransaction(signed.raw);
+    const receipt = await this.rpc.waitForTransaction(hash);
+
+    return {
+      hash,
+      amountIn: amount,
+      amountOut: amount, // 1:1 for wrap
+      gasUsed: receipt.gasUsed,
+      effectiveGasPrice: receipt.effectiveGasPrice,
+      blockNumber: receipt.blockNumber,
+    };
+  }
+
+  /**
+   * Unwrap WETH to ETH
+   * This is a direct call to the WETH contract, not a Uniswap swap
+   */
+  async unwrapWETH(amount: bigint): Promise<SwapExecutionResult> {
+    if (!this.account) {
+      throw new Error('Account required for unwrapping WETH');
+    }
+
+    const wethAddress = await this.getWETHAddress();
+    const chainId = await this.getChainId();
+
+    // Encode WETH withdraw(uint256) call
+    const selector = '0x2e1a7d4d'; // withdraw(uint256)
+    const amountHex = amount.toString(16).padStart(64, '0');
+    const withdrawData = (selector + amountHex) as Hex;
+
+    // Estimate gas
+    const gasEstimate = await this.gasOracle.estimateGas({
+      from: this.account.address,
+      to: wethAddress,
+      data: withdrawData,
+      value: 0n,
+    });
+
+    // Get nonce
+    const nonce = await this.rpc.getTransactionCount(this.account.address);
+
+    // Build transaction
+    let builder = TransactionBuilder.create()
+      .to(wethAddress)
+      .value(0n)
+      .data(withdrawData)
+      .nonce(nonce)
+      .chainId(chainId)
+      .gasLimit(gasEstimate.gasLimit * 12n / 10n);
+
+    if (gasEstimate.maxFeePerGas) {
+      builder = builder
+        .maxFeePerGas(gasEstimate.maxFeePerGas)
+        .maxPriorityFeePerGas(gasEstimate.maxPriorityFeePerGas ?? 0n);
+    } else if (gasEstimate.gasPrice) {
+      builder = builder.gasPrice(gasEstimate.gasPrice);
+    }
+
+    // Sign and send
+    const signed = builder.sign(this.account);
+    const hash = await this.rpc.sendRawTransaction(signed.raw);
+    const receipt = await this.rpc.waitForTransaction(hash);
+
+    return {
+      hash,
+      amountIn: amount,
+      amountOut: amount, // 1:1 for unwrap
+      gasUsed: receipt.gasUsed,
+      effectiveGasPrice: receipt.effectiveGasPrice,
+      blockNumber: receipt.blockNumber,
+    };
   }
 }
 

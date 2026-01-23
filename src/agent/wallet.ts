@@ -1092,9 +1092,46 @@ export class AgentWallet {
       throw new TokenNotSupportedError({ token: options.toToken, chainId });
     }
 
+    // Parse input amount
+    const amountIn = parseTokenAmount(options.amount, fromResolved.token);
+    const slippage = options.slippageTolerance ?? 0.5;
+
+    // Check for ETH <-> WETH wrap/unwrap (1:1, no Uniswap needed)
+    const isFromETH = isNativeETH(fromResolved.token);
+    const isToETH = isNativeETH(toResolved.token);
+    const isFromWETH = fromResolved.token.symbol.toUpperCase() === 'WETH';
+    const isToWETH = toResolved.token.symbol.toUpperCase() === 'WETH';
+
+    if ((isFromETH && isToWETH) || (isFromWETH && isToETH)) {
+      // ETH <-> WETH is always 1:1, no slippage, no price impact
+      const wethAddr = WETH_ADDRESSES[chainId];
+      return {
+        fromToken: {
+          symbol: fromResolved.token.symbol,
+          address: (isFromETH ? wethAddr : fromResolved.address) as Address,
+          amount: formatTokenAmount(amountIn, fromResolved.token),
+          rawAmount: amountIn,
+          decimals: fromResolved.token.decimals,
+        },
+        toToken: {
+          symbol: toResolved.token.symbol,
+          address: (isToETH ? wethAddr : toResolved.address) as Address,
+          amount: formatTokenAmount(amountIn, toResolved.token), // 1:1
+          rawAmount: amountIn, // 1:1
+          decimals: toResolved.token.decimals,
+        },
+        amountOutMinimum: formatTokenAmount(amountIn, toResolved.token), // No slippage on wrap
+        fee: 0, // No fee for wrap/unwrap
+        priceImpact: 0, // No price impact
+        gasEstimate: 50000n, // Estimate for wrap/unwrap
+        effectivePrice: '1.000000',
+        slippageTolerance: slippage,
+      };
+    }
+
     // Handle native ETH - use WETH for quotes
     let tokenInAddress = fromResolved.address;
-    if (isNativeETH(fromResolved.token)) {
+    if (isFromETH) {
       const wethAddr = WETH_ADDRESSES[chainId];
       if (!wethAddr) {
         throw new EthAgentError({
@@ -1107,7 +1144,7 @@ export class AgentWallet {
     }
 
     let tokenOutAddress = toResolved.address;
-    if (isNativeETH(toResolved.token)) {
+    if (isToETH) {
       const wethAddr = WETH_ADDRESSES[chainId];
       if (!wethAddr) {
         throw new EthAgentError({
@@ -1118,10 +1155,6 @@ export class AgentWallet {
       }
       tokenOutAddress = wethAddr;
     }
-
-    // Parse input amount
-    const amountIn = parseTokenAmount(options.amount, fromResolved.token);
-    const slippage = options.slippageTolerance ?? 0.5;
 
     // Get the Uniswap client and fetch quote
     const uniswap = await this.getUniswapClient();
@@ -1224,6 +1257,13 @@ export class AgentWallet {
     // 4. Handle native ETH - use WETH address for swap routing
     const isFromETH = isNativeETH(fromResolved.token);
     const isToETH = isNativeETH(toResolved.token);
+    const isFromWETH = fromResolved.token.symbol.toUpperCase() === 'WETH';
+    const isToWETH = toResolved.token.symbol.toUpperCase() === 'WETH';
+
+    // Special case: ETH <-> WETH is wrapping/unwrapping, not a swap
+    if ((isFromETH && isToWETH) || (isFromWETH && isToETH)) {
+      return this.handleETHWETHWrap(options, fromResolved, toResolved, amountIn, chainId);
+    }
 
     let tokenInAddress = fromResolved.address;
     if (isFromETH) {
@@ -1429,6 +1469,92 @@ export class AgentWallet {
    */
   getSwapLimits(): ReturnType<LimitsEngine['getSwapStatus']> {
     return this.limits.getSwapStatus();
+  }
+
+  /**
+   * Handle ETH <-> WETH wrapping/unwrapping
+   * This is a direct operation with the WETH contract, not a Uniswap swap
+   */
+  private async handleETHWETHWrap(
+    _options: SwapOptions,
+    fromResolved: { token: TokenInfo; address: string },
+    toResolved: { token: TokenInfo; address: string },
+    amountIn: bigint,
+    chainId: number
+  ): Promise<SwapResult> {
+    const uniswap = await this.getUniswapClient();
+    const isWrapping = isNativeETH(fromResolved.token); // ETH -> WETH
+
+    // Check balance
+    if (isWrapping) {
+      const balance = await this.rpc.getBalance(this.address);
+      if (balance < amountIn) {
+        throw new InsufficientFundsError({
+          required: { wei: amountIn, eth: formatETH(amountIn) },
+          available: { wei: balance, eth: formatETH(balance) },
+          shortage: { wei: amountIn - balance, eth: formatETH(amountIn - balance) },
+        });
+      }
+    } else {
+      // Unwrapping - check WETH balance
+      const wethAddress = WETH_ADDRESSES[chainId];
+      const tokenContract = new Contract({
+        address: wethAddress as Address,
+        abi: ERC20_ABI,
+        rpc: this.rpc,
+      });
+      const balance = await tokenContract.read<bigint>('balanceOf', [this.address]);
+      if (balance < amountIn) {
+        throw new InsufficientFundsError({
+          required: { wei: amountIn, eth: formatTokenAmount(amountIn, fromResolved.token) },
+          available: { wei: balance, eth: formatTokenAmount(balance, fromResolved.token) },
+          shortage: {
+            wei: amountIn - balance,
+            eth: formatTokenAmount(amountIn - balance, fromResolved.token),
+          },
+        });
+      }
+    }
+
+    // Execute wrap or unwrap
+    const result = isWrapping
+      ? await uniswap.wrapETH(amountIn)
+      : await uniswap.unwrapWETH(amountIn);
+
+    // Get updated limits
+    const swapStatus = this.limits.getSwapStatus();
+
+    return {
+      success: true,
+      hash: result.hash as Hash,
+      summary: isWrapping
+        ? `Wrapped ${formatTokenAmount(amountIn, fromResolved.token)} ETH to WETH. TX: ${result.hash}`
+        : `Unwrapped ${formatTokenAmount(amountIn, fromResolved.token)} WETH to ETH. TX: ${result.hash}`,
+      swap: {
+        tokenIn: {
+          symbol: fromResolved.token.symbol,
+          amount: formatTokenAmount(amountIn, fromResolved.token),
+          rawAmount: amountIn,
+        },
+        tokenOut: {
+          symbol: toResolved.token.symbol,
+          amount: formatTokenAmount(result.amountOut, toResolved.token),
+          rawAmount: result.amountOut,
+        },
+        effectivePrice: '1.000000', // 1:1 for wrap/unwrap
+        priceImpact: 0,
+      },
+      transaction: {
+        hash: result.hash as Hash,
+        from: this.address,
+        gasUsed: result.gasUsed,
+      },
+      limits: {
+        remaining: {
+          daily: { usd: swapStatus.daily.remaining },
+        },
+      },
+    };
   }
 
   /**
