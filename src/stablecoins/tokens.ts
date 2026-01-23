@@ -28,6 +28,7 @@ export const USDC: StablecoinInfo = {
     167000: '0x07d83526730c7438048d55a4fc0b850e2aab6f0b',   // Taiko Mainnet
     534352: '0x06eFdBFf2a14a7c8E15944D1F4A48F9F95F663A4',   // Scroll Mainnet
     59144: '0x176211869cA2b568f2A7D4EE941E073a821EE1ff',    // Linea Mainnet
+    324: '0x3355df6D4c9C3035724Fd0e3914dE96A5a83aaf4',      // zkSync Era Mainnet
   },
 };
 
@@ -49,6 +50,7 @@ export const USDT: StablecoinInfo = {
     167000: '0x2DEF195713CF4a606B49D07E520e22C17899a736',   // Taiko Mainnet
     534352: '0xf55BEC9cafDbE8730f096Aa55dad6D22d44099Df',   // Scroll Mainnet
     59144: '0xA219439258ca9da29E9Cc4cE5596924745e12B93',    // Linea Mainnet
+    324: '0x493257fD37EDB34451f62EDf8D2a0C418852bA4C',      // zkSync Era Mainnet
   },
 };
 

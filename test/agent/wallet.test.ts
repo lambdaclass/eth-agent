@@ -229,6 +229,24 @@ describe('AgentWallet', () => {
       expect(wallet).toBeInstanceOf(AgentWallet);
     });
 
+    it('uses zksync network', () => {
+      const wallet = AgentWallet.create({
+        privateKey: testPrivateKey,
+        network: 'zksync',
+      });
+
+      expect(wallet).toBeInstanceOf(AgentWallet);
+    });
+
+    it('uses zksync-sepolia testnet', () => {
+      const wallet = AgentWallet.create({
+        privateKey: testPrivateKey,
+        network: 'zksync-sepolia',
+      });
+
+      expect(wallet).toBeInstanceOf(AgentWallet);
+    });
+
     it('configures trusted addresses', () => {
       const wallet = AgentWallet.create({
         privateKey: testPrivateKey,

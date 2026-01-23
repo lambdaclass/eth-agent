@@ -166,6 +166,25 @@ describe('Stablecoin Tokens', () => {
     });
   });
 
+  describe('zkSync Era network support', () => {
+    it('returns USDC address for zkSync Era mainnet', () => {
+      const address = getStablecoinAddress(USDC, 324);
+      expect(address).toBe('0x3355df6D4c9C3035724Fd0e3914dE96A5a83aaf4');
+    });
+
+    it('returns USDT address for zkSync Era mainnet', () => {
+      const address = getStablecoinAddress(USDT, 324);
+      expect(address).toBe('0x493257fD37EDB34451f62EDf8D2a0C418852bA4C');
+    });
+
+    it('returns stablecoins available on zkSync Era', () => {
+      const stablecoins = getStablecoinsForChain(324);
+      expect(stablecoins.has('USDC')).toBe(true);
+      expect(stablecoins.has('USDT')).toBe(true);
+      expect(stablecoins.has('DAI')).toBe(false);
+    });
+  });
+
   describe('isKnownStablecoin', () => {
     it('identifies USDC on mainnet', () => {
       const info = isKnownStablecoin('0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48', 1);
