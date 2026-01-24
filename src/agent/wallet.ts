@@ -886,6 +886,9 @@ export class AgentWallet {
 
   /**
    * Get wallet capabilities
+   *
+   * Note: chainId is returned from cache if available. Call getChainId() first
+   * if you need the accurate chain ID before calling this method.
    */
   getCapabilities(): {
     address: Address;
@@ -897,7 +900,7 @@ export class AgentWallet {
     return {
       address: this.address,
       agentId: this.agentId,
-      network: { chainId: 1 }, // TODO: Get from RPC
+      network: { chainId: this.cachedChainId ?? 1 },
       limits: this.limits.getStatus(),
       operations: ['send', 'getBalance', 'transferToken', 'getTokenBalance'],
     };

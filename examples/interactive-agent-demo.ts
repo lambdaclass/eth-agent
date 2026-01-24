@@ -32,7 +32,7 @@ import { anthropicTools } from '../src/integrations/anthropic.js';
 
 const CONFIG = {
   // Use Sepolia testnet by default for safe demos
-  rpcUrl: process.env.RPC_URL ?? 'https://eth-sepolia.public.blastapi.io',
+  rpcUrl: process.env.RPC_URL ?? 'https://1rpc.io/sepolia',
   chainId: process.env.CHAIN_ID ? parseInt(process.env.CHAIN_ID) : 11155111, // Sepolia
 
   // Claude model to use
@@ -376,6 +376,14 @@ async function main(): Promise<void> {
   const tools = anthropicTools(wallet);
 
   printHeader();
+
+  // Fetch chain ID first to populate cache for getCapabilities()
+  try {
+    await wallet.getChainId();
+  } catch {
+    // Will fall back to default chain ID
+  }
+
   printWalletInfo(wallet);
   printLimits(wallet);
   printAvailableTools(tools.getToolNames());
