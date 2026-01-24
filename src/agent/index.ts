@@ -60,6 +60,19 @@ export type {
   SendStablecoinGaslessResult,
 } from './smart-wallet.js';
 
+// Transaction persistence
+export {
+  MemoryTransactionStore,
+  FileTransactionStore,
+  createMemoryStore,
+  createFileStore,
+} from './tx-store.js';
+export type {
+  TransactionStore,
+  PendingTransaction,
+  TransactionStatus,
+} from './tx-store.js';
+
 // Errors
 export {
   EthAgentError,

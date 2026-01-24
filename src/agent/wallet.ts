@@ -72,6 +72,7 @@ import {
   type UnifiedBridgeStatus,
   type RoutePreference,
 } from '../bridge/index.js';
+import type { TransactionStore, PendingTransaction } from './tx-store.js';
 
 export interface AgentWalletConfig {
   // Account (private key or Account object)
@@ -96,6 +97,9 @@ export interface AgentWalletConfig {
 
   // Agent identification
   agentId?: string;
+
+  // Transaction persistence
+  transactionStore?: TransactionStore;
 }
 
 export interface SendOptions {
@@ -315,6 +319,7 @@ export class AgentWallet {
   private cachedBridge?: CCTPBridge;
   private cachedBridgeRouter?: BridgeRouter;
   private cachedChainId?: number;
+  private readonly transactionStore?: TransactionStore;
 
   // ETH price cache for USD value estimation
   private cachedETHPrice: { value: bigint; timestamp: number } | null = null;
@@ -329,7 +334,7 @@ export class AgentWallet {
     trustedAddresses: Map<string, string>;
     blockedAddresses: Map<string, string>;
     agentId: string;
-  }>) {
+  }> & { transactionStore?: TransactionStore }) {
     this.account = config.account;
     this.address = config.account.address;
     this.rpc = config.rpc;
@@ -343,6 +348,7 @@ export class AgentWallet {
     this.trustedAddresses = config.trustedAddresses;
     this.blockedAddresses = config.blockedAddresses;
     this.agentId = config.agentId;
+    this.transactionStore = config.transactionStore;
   }
 
   /**
@@ -411,6 +417,7 @@ export class AgentWallet {
       trustedAddresses,
       blockedAddresses,
       agentId: config.agentId ?? 'agent',
+      transactionStore: config.transactionStore,
     });
   }
 
@@ -531,6 +538,26 @@ export class AgentWallet {
       throw error;
     }
 
+    // 10.5 Save pending transaction to store
+    if (this.transactionStore) {
+      await this.transactionStore.save({
+        hash,
+        from: this.address,
+        to,
+        value,
+        nonce,
+        chainId,
+        gasLimit: options.gasLimit ?? gasEstimate.gasLimit,
+        maxFeePerGas: options.maxFeePerGas ?? gasEstimate.maxFeePerGas,
+        maxPriorityFeePerGas: options.maxPriorityFeePerGas ?? gasEstimate.maxPriorityFeePerGas,
+        gasPrice: gasEstimate.gasPrice,
+        data: options.data,
+        status: 'pending',
+        sentAt: Date.now(),
+        description: `Send ${formatETH(value)} ETH to ${options.to}`,
+      });
+    }
+
     // 11. Wait for receipt
     let receipt;
     try {
@@ -540,6 +567,11 @@ export class AgentWallet {
       // Reset nonce if we can't confirm
       await this.nonceManager.onTransactionFailed();
       throw error;
+    }
+
+    // 11.5 Update transaction status in store
+    if (this.transactionStore) {
+      await this.transactionStore.markConfirmed(hash, receipt);
     }
 
     // 12. Record spend
@@ -2170,6 +2202,148 @@ export class AgentWallet {
     } else {
       return amount * 10n ** BigInt(6 - token.decimals);
     }
+  }
+
+  // ============ Transaction Persistence Methods ============
+
+  /**
+   * List all pending transactions from the store
+   * Returns transactions that were sent but not yet confirmed
+   */
+  async listPendingTransactions(): Promise<PendingTransaction[]> {
+    if (!this.transactionStore) {
+      return [];
+    }
+    return this.transactionStore.listPending();
+  }
+
+  /**
+   * List all tracked transactions (including confirmed/failed)
+   */
+  async listAllTransactions(): Promise<PendingTransaction[]> {
+    if (!this.transactionStore) {
+      return [];
+    }
+    return this.transactionStore.listAll();
+  }
+
+  /**
+   * Get a specific transaction by hash from the store
+   */
+  async getTransaction(txHash: Hash): Promise<PendingTransaction | null> {
+    if (!this.transactionStore) {
+      return null;
+    }
+    return this.transactionStore.load(txHash);
+  }
+
+  /**
+   * Check and update the status of a pending transaction
+   * Queries the blockchain for the current status
+   */
+  async refreshTransactionStatus(txHash: Hash): Promise<PendingTransaction | null> {
+    if (!this.transactionStore) {
+      return null;
+    }
+
+    const tx = await this.transactionStore.load(txHash);
+    if (tx?.status !== 'pending') {
+      return tx;
+    }
+
+    try {
+      const receipt = await this.rpc.getTransactionReceipt(txHash);
+      if (receipt) {
+        await this.transactionStore.markConfirmed(txHash, receipt);
+        return await this.transactionStore.load(txHash);
+      }
+    } catch {
+      // Transaction not found on chain - might still be pending or dropped
+    }
+
+    return tx;
+  }
+
+  /**
+   * Recover and wait for all pending transactions from a previous session
+   * Returns an array of results for each pending transaction
+   */
+  async recoverPendingTransactions(): Promise<Array<{
+    hash: Hash;
+    status: 'confirmed' | 'failed' | 'pending' | 'dropped';
+    receipt?: { blockNumber: number; gasUsed: bigint };
+  }>> {
+    if (!this.transactionStore) {
+      return [];
+    }
+
+    const pending = await this.transactionStore.listPending();
+    const results: Array<{
+      hash: Hash;
+      status: 'confirmed' | 'failed' | 'pending' | 'dropped';
+      receipt?: { blockNumber: number; gasUsed: bigint };
+    }> = [];
+
+    for (const tx of pending) {
+      try {
+        const receipt = await this.rpc.getTransactionReceipt(tx.hash);
+        if (receipt) {
+          await this.transactionStore.markConfirmed(tx.hash, receipt);
+          results.push({
+            hash: tx.hash,
+            status: receipt.status === 'success' ? 'confirmed' : 'failed',
+            receipt: { blockNumber: receipt.blockNumber, gasUsed: receipt.gasUsed },
+          });
+        } else {
+          // Still pending - check if nonce was used by another tx
+          const currentNonce = await this.rpc.getTransactionCount(tx.from);
+          if (currentNonce > tx.nonce) {
+            // Nonce was used, transaction was likely replaced/dropped
+            await this.transactionStore.markDropped(tx.hash);
+            results.push({ hash: tx.hash, status: 'dropped' });
+          } else {
+            // Still pending
+            results.push({ hash: tx.hash, status: 'pending' });
+          }
+        }
+      } catch {
+        // Error checking - leave as pending
+        results.push({ hash: tx.hash, status: 'pending' });
+      }
+    }
+
+    return results;
+  }
+
+  /**
+   * Wait for a specific transaction to be confirmed
+   * Useful for recovering transaction status after restart
+   */
+  async waitForTransactionRecovery(txHash: Hash, timeoutMs = 120000): Promise<{
+    status: 'confirmed' | 'failed' | 'timeout';
+    receipt?: { blockNumber: number; gasUsed: bigint };
+  }> {
+    try {
+      const receipt = await this.rpc.waitForTransaction(txHash, timeoutMs);
+
+      if (this.transactionStore) {
+        await this.transactionStore.markConfirmed(txHash, receipt);
+      }
+
+      return {
+        status: receipt.status === 'success' ? 'confirmed' : 'failed',
+        receipt: { blockNumber: receipt.blockNumber, gasUsed: receipt.gasUsed },
+      };
+    } catch {
+      return { status: 'timeout' };
+    }
+  }
+
+  /**
+   * Check if transaction persistence is enabled
+   */
+  hasTransactionStore(): boolean {
+    return this.transactionStore !== undefined;
   }
 }
 
