@@ -109,6 +109,82 @@ describe('Stablecoin Tokens', () => {
     });
   });
 
+  describe('Taiko network support', () => {
+    it('returns USDC address for Taiko mainnet', () => {
+      const address = getStablecoinAddress(USDC, 167000);
+      expect(address).toBe('0x07d83526730c7438048d55a4fc0b850e2aab6f0b');
+    });
+
+    it('returns USDT address for Taiko mainnet', () => {
+      const address = getStablecoinAddress(USDT, 167000);
+      expect(address).toBe('0x2DEF195713CF4a606B49D07E520e22C17899a736');
+    });
+
+    it('returns stablecoins available on Taiko', () => {
+      const stablecoins = getStablecoinsForChain(167000);
+      expect(stablecoins.has('USDC')).toBe(true);
+      expect(stablecoins.has('USDT')).toBe(true);
+      expect(stablecoins.has('DAI')).toBe(false);
+    });
+  });
+
+  describe('Scroll network support', () => {
+    it('returns USDC address for Scroll mainnet', () => {
+      const address = getStablecoinAddress(USDC, 534352);
+      expect(address).toBe('0x06eFdBFf2a14a7c8E15944D1F4A48F9F95F663A4');
+    });
+
+    it('returns USDT address for Scroll mainnet', () => {
+      const address = getStablecoinAddress(USDT, 534352);
+      expect(address).toBe('0xf55BEC9cafDbE8730f096Aa55dad6D22d44099Df');
+    });
+
+    it('returns stablecoins available on Scroll', () => {
+      const stablecoins = getStablecoinsForChain(534352);
+      expect(stablecoins.has('USDC')).toBe(true);
+      expect(stablecoins.has('USDT')).toBe(true);
+      expect(stablecoins.has('DAI')).toBe(false);
+    });
+  });
+
+  describe('Linea network support', () => {
+    it('returns USDC address for Linea mainnet', () => {
+      const address = getStablecoinAddress(USDC, 59144);
+      expect(address).toBe('0x176211869cA2b568f2A7D4EE941E073a821EE1ff');
+    });
+
+    it('returns USDT address for Linea mainnet', () => {
+      const address = getStablecoinAddress(USDT, 59144);
+      expect(address).toBe('0xA219439258ca9da29E9Cc4cE5596924745e12B93');
+    });
+
+    it('returns stablecoins available on Linea', () => {
+      const stablecoins = getStablecoinsForChain(59144);
+      expect(stablecoins.has('USDC')).toBe(true);
+      expect(stablecoins.has('USDT')).toBe(true);
+      expect(stablecoins.has('DAI')).toBe(false);
+    });
+  });
+
+  describe('zkSync Era network support', () => {
+    it('returns USDC address for zkSync Era mainnet', () => {
+      const address = getStablecoinAddress(USDC, 324);
+      expect(address).toBe('0x3355df6D4c9C3035724Fd0e3914dE96A5a83aaf4');
+    });
+
+    it('returns USDT address for zkSync Era mainnet', () => {
+      const address = getStablecoinAddress(USDT, 324);
+      expect(address).toBe('0x493257fD37EDB34451f62EDf8D2a0C418852bA4C');
+    });
+
+    it('returns stablecoins available on zkSync Era', () => {
+      const stablecoins = getStablecoinsForChain(324);
+      expect(stablecoins.has('USDC')).toBe(true);
+      expect(stablecoins.has('USDT')).toBe(true);
+      expect(stablecoins.has('DAI')).toBe(false);
+    });
+  });
+
   describe('isKnownStablecoin', () => {
     it('identifies USDC on mainnet', () => {
       const info = isKnownStablecoin('0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48', 1);

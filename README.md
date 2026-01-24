@@ -90,8 +90,8 @@ const balances = await wallet.getStablecoinBalances();
 | Token | Symbol | Chains |
 |-------|--------|--------|
 | Ether | `ETH` | Ethereum, Arbitrum, Optimism, Base, Polygon, Avalanche |
-| USD Coin | `USDC` | Ethereum, Arbitrum, Optimism, Base, Polygon, Avalanche |
-| Tether | `USDT` | Ethereum, Arbitrum, Optimism, Base, Polygon, Avalanche |
+| USD Coin | `USDC` | Ethereum, Arbitrum, Optimism, Base, Polygon, Avalanche, Taiko, Scroll, Linea, zkSync Era |
+| Tether | `USDT` | Ethereum, Arbitrum, Optimism, Base, Polygon, Avalanche, Taiko, Scroll, Linea, zkSync Era |
 | Sky USD | `USDS` | Ethereum, Base |
 | PayPal USD | `PYUSD` | Ethereum |
 | Frax | `FRAX` | Ethereum, Arbitrum, Optimism, Polygon |
@@ -245,7 +245,7 @@ const fast = await wallet.bridge({
 | Stargate | USDC, USDT | 5-15 min | ~0.06% | Liquidity pools |
 | Across | USDC, USDT | 2-5 min | Variable | Optimistic bridging |
 
-### Supported Chains
+### Supported Chains for Bridging
 
 | Chain | Chain ID | Testnet |
 |-------|----------|---------|
@@ -270,6 +270,47 @@ const wallet = AgentWallet.create({
   },
 });
 ```
+
+## Networks
+
+Send stablecoins on Ethereum mainnet or any supported L2 for lower fees:
+
+```typescript
+// Ethereum Mainnet (default)
+const wallet = AgentWallet.create({ privateKey: KEY });
+
+// L2 networks for lower fees
+const taikoWallet = AgentWallet.create({ privateKey: KEY, network: 'taiko' });
+const scrollWallet = AgentWallet.create({ privateKey: KEY, network: 'scroll' });
+const lineaWallet = AgentWallet.create({ privateKey: KEY, network: 'linea' });
+const zksyncWallet = AgentWallet.create({ privateKey: KEY, network: 'zksync' });
+
+// Other supported networks
+const arbitrumWallet = AgentWallet.create({ privateKey: KEY, network: 'arbitrum' });
+const baseWallet = AgentWallet.create({ privateKey: KEY, network: 'base' });
+const optimismWallet = AgentWallet.create({ privateKey: KEY, network: 'optimism' });
+const polygonWallet = AgentWallet.create({ privateKey: KEY, network: 'polygon' });
+
+// Testnets
+const sepoliaWallet = AgentWallet.create({ privateKey: KEY, network: 'sepolia' });
+const taikoTestnet = AgentWallet.create({ privateKey: KEY, network: 'taiko-hekla' });
+```
+
+### Supported Networks
+
+| Network | Shortcut | Chain ID | Type | Notes |
+|---------|----------|----------|------|-------|
+| Ethereum | `mainnet` | 1 | L1 | Default, ENS support |
+| Arbitrum | `arbitrum` | 42161 | L2 | Optimistic rollup |
+| Optimism | `optimism` | 10 | L2 | OP Stack |
+| Base | `base` | 8453 | L2 | OP Stack, Coinbase |
+| Polygon | `polygon` | 137 | L2 | Sidechain |
+| Taiko | `taiko` | 167000 | L2 | Type 1 zkEVM |
+| Scroll | `scroll` | 534352 | L2 | zkEVM |
+| Linea | `linea` | 59144 | L2 | zkEVM, Consensys |
+| zkSync Era | `zksync` | 324 | L2 | zkEVM, native AA |
+
+All L2s support USDC and USDT with significantly lower fees than mainnet.
 ## Safety
 
 Spending limits prevent your agent from draining a wallet:
@@ -355,7 +396,7 @@ if (!preview.canExecute) console.log(preview.blockers);
 
 ## AI Integrations
 
-Ready-to-use tool definitions for AI frameworks with 18 tools covering transfers, swaps, and bridging:
+Ready-to-use tool definitions for AI frameworks with 20 tools covering transfers, swaps, bridging, and network info:
 
 ```typescript
 import { AgentWallet, anthropicTools } from '@lambdaclass/eth-agent';
@@ -389,6 +430,7 @@ createMCPServer({ wallet }).listen();
 | **Balances** | `eth_getBalance`, `eth_getTokenBalance`, `eth_getStablecoinBalance`, `eth_getStablecoinBalances` |
 | **Swaps** | `eth_swap`, `eth_getSwapQuote`, `eth_getSwapLimits` |
 | **Bridging** | `eth_bridge`, `eth_previewBridge`, `eth_compareBridgeRoutes`, `eth_getBridgeStatus`, `eth_getBridgeLimits` |
+| **Networks** | `eth_getNetworks`, `eth_getNetworkInfo` |
 | **Info** | `eth_getLimits`, `eth_getCapabilities` |
 
 All tools return structured responses with `success`, `data`, and `summary` fields for easy LLM consumption.

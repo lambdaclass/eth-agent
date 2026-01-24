@@ -175,6 +175,78 @@ describe('AgentWallet', () => {
       expect(wallet).toBeInstanceOf(AgentWallet);
     });
 
+    it('uses taiko network', () => {
+      const wallet = AgentWallet.create({
+        privateKey: testPrivateKey,
+        network: 'taiko',
+      });
+
+      expect(wallet).toBeInstanceOf(AgentWallet);
+    });
+
+    it('uses taiko-hekla testnet', () => {
+      const wallet = AgentWallet.create({
+        privateKey: testPrivateKey,
+        network: 'taiko-hekla',
+      });
+
+      expect(wallet).toBeInstanceOf(AgentWallet);
+    });
+
+    it('uses scroll network', () => {
+      const wallet = AgentWallet.create({
+        privateKey: testPrivateKey,
+        network: 'scroll',
+      });
+
+      expect(wallet).toBeInstanceOf(AgentWallet);
+    });
+
+    it('uses scroll-sepolia testnet', () => {
+      const wallet = AgentWallet.create({
+        privateKey: testPrivateKey,
+        network: 'scroll-sepolia',
+      });
+
+      expect(wallet).toBeInstanceOf(AgentWallet);
+    });
+
+    it('uses linea network', () => {
+      const wallet = AgentWallet.create({
+        privateKey: testPrivateKey,
+        network: 'linea',
+      });
+
+      expect(wallet).toBeInstanceOf(AgentWallet);
+    });
+
+    it('uses linea-sepolia testnet', () => {
+      const wallet = AgentWallet.create({
+        privateKey: testPrivateKey,
+        network: 'linea-sepolia',
+      });
+
+      expect(wallet).toBeInstanceOf(AgentWallet);
+    });
+
+    it('uses zksync network', () => {
+      const wallet = AgentWallet.create({
+        privateKey: testPrivateKey,
+        network: 'zksync',
+      });
+
+      expect(wallet).toBeInstanceOf(AgentWallet);
+    });
+
+    it('uses zksync-sepolia testnet', () => {
+      const wallet = AgentWallet.create({
+        privateKey: testPrivateKey,
+        network: 'zksync-sepolia',
+      });
+
+      expect(wallet).toBeInstanceOf(AgentWallet);
+    });
+
     it('configures trusted addresses', () => {
       const wallet = AgentWallet.create({
         privateKey: testPrivateKey,

@@ -633,3 +633,195 @@ const wallet = AgentWallet.create({
   },
 });
 ```
+
+## Agent Workflows
+
+This section provides guidance for AI agents on how to effectively use the available tools.
+
+### Recommended First Calls
+
+When starting a session, agents should gather context before executing operations:
+
+```typescript
+// 1. Understand the current network
+eth_getNetworkInfo({})
+// → "Connected to Ethereum Mainnet (1). Stablecoins: USDC, USDT, USDS, DAI, PYUSD, FRAX"
+
+// 2. Check available funds
+eth_getStablecoinBalances({})
+// → { USDC: "1,234.56", USDT: "500.00", ... }
+
+// 3. (Optional) Discover available networks for lower fees
+eth_getNetworks({})
+// → "10 L2 networks available for lower fees: Optimism, Polygon, Base, Arbitrum, ..."
+```
+
+### Workflow: Pay Someone with Lowest Fees
+
+```
+User: "Pay alice.eth 50 USDC with the lowest fees possible"
+
+Agent workflow:
+1. eth_getNetworks({})
+   → Discover L2 options: Arbitrum, Optimism, Base, Polygon, Taiko, Scroll, Linea, zkSync Era
+
+2. Check if recipient is on a specific L2 (ask user if unclear)
+   → User confirms: "Use Scroll"
+
+3. eth_getStablecoinBalance({ token: 'USDC' })
+   → Check current balance on mainnet: "1,234.56 USDC"
+
+4. eth_previewBridge({ token: 'USDC', destinationChainId: 534352, amount: '100' })
+   → Preview bridge: "Can bridge. Est. time: 15-30 min. Fee: ~$0.50"
+
+5. eth_bridge({ token: 'USDC', destinationChainId: 534352, amount: '100' })
+   → Execute bridge, get trackingId
+
+6. [Wait for bridge - inform user this takes 15-30 minutes]
+
+7. eth_getBridgeStatus({ trackingId: 'CCTP_1_534352_0x...' })
+   → Poll until complete
+
+8. [APPLICATION CODE: Create new wallet for Scroll]
+   const scrollWallet = AgentWallet.create({ privateKey: KEY, network: 'scroll' });
+   const scrollTools = createTools(scrollWallet);
+
+9. eth_sendStablecoin({ token: 'USDC', to: 'alice.eth', amount: '50' })
+   → "Sent 50 USDC to alice.eth on Scroll. TX: 0x..."
+```
+
+### Workflow: Simple Stablecoin Payment
+
+```
+User: "Send 100 USDC to bob.eth"
+
+Agent workflow:
+1. eth_getStablecoinBalances({})
+   → Check balance: "USDC: 500.00"
+   → Sufficient funds ✓
+
+2. eth_sendStablecoin({ token: 'USDC', to: 'bob.eth', amount: '100' })
+   → "Sent 100 USDC to bob.eth. TX: 0xabc..."
+```
+
+### Workflow: Check If Payment Is Feasible
+
+```
+User: "Can I send 1000 USDC to merchant.eth?"
+
+Agent workflow:
+1. eth_getStablecoinBalance({ token: 'USDC' })
+   → "USDC Balance: 500.00"
+
+2. Agent response: "You only have 500 USDC. Would you like to send 500 USDC instead?"
+```
+
+### L2 vs L1: When to Use Each
+
+| Use L1 (Mainnet) When | Use L2 When |
+|----------------------|-------------|
+| Maximum security required | Routine payments |
+| Large institutional transfers | High-frequency transactions |
+| ENS domain purchases | Fee-sensitive operations |
+| Interacting with L1-only protocols | The recipient is on the L2 |
+
+**Fee comparison (approximate):**
+- Mainnet: $0.50 - $5.00 per transfer
+- L2s: $0.01 - $0.10 per transfer
+
+### Important: Network Switching
+
+**Agents cannot dynamically switch networks.** Each wallet instance is bound to one network.
+
+To operate on a different network, the application must create a new wallet:
+
+```typescript
+// WRONG: Agents cannot do this
+// There is no "switch_network" tool
+
+// CORRECT: Application creates separate wallets
+const mainnetWallet = AgentWallet.create({ privateKey: KEY, network: 'mainnet' });
+const scrollWallet = AgentWallet.create({ privateKey: KEY, network: 'scroll' });
+
+// Create tools for each wallet
+const mainnetTools = createTools(mainnetWallet);
+const scrollTools = createTools(scrollWallet);
+
+// Agent uses the appropriate tool set based on context
+```
+
+**Implication for agents:** When a user requests operations on a specific L2, the agent should:
+1. Inform the application which network is needed
+2. Use the tools provided for that network
+3. If tools for the requested network aren't available, inform the user
+
+### Multi-Network Agent Architecture
+
+For agents that need to operate across multiple networks:
+
+```typescript
+import { AgentWallet, createTools } from '@lambdaclass/eth-agent';
+
+// Create wallets for each network the agent should support
+const wallets = {
+  mainnet: AgentWallet.create({ privateKey: KEY, network: 'mainnet' }),
+  scroll: AgentWallet.create({ privateKey: KEY, network: 'scroll' }),
+  zksync: AgentWallet.create({ privateKey: KEY, network: 'zksync' }),
+};
+
+// Create tool sets for each
+const toolSets = {
+  mainnet: createTools(wallets.mainnet),
+  scroll: createTools(wallets.scroll),
+  zksync: createTools(wallets.zksync),
+};
+
+// Agent selects the appropriate tool set based on user request
+function getToolsForNetwork(network: string) {
+  return toolSets[network] ?? toolSets.mainnet;
+}
+```
+
+### Common Patterns
+
+**Pattern: Check before send**
+```typescript
+// Always check balance before attempting to send
+const balance = await executeTool(tools, 'eth_getStablecoinBalance', { token: 'USDC' });
+if (parseFloat(balance.data.formatted) < amount) {
+  return "Insufficient USDC balance";
+}
+await executeTool(tools, 'eth_sendStablecoin', { token: 'USDC', to, amount });
+```
+
+**Pattern: Preview before bridge**
+```typescript
+// Always preview bridges to show fees and timing
+const preview = await executeTool(tools, 'eth_previewBridge', { token: 'USDC', destinationChainId, amount });
+if (!preview.data.canBridge) {
+  return `Cannot bridge: ${preview.data.blockers.join(', ')}`;
+}
+// Show preview to user, get confirmation, then execute
+```
+
+**Pattern: Poll bridge status**
+```typescript
+// Bridge operations are async - poll for completion
+let status = await executeTool(tools, 'eth_getBridgeStatus', { trackingId });
+while (status.data.status === 'pending') {
+  await sleep(60000); // Wait 1 minute
+  status = await executeTool(tools, 'eth_getBridgeStatus', { trackingId });
+}
+```
+
+### Error Recovery
+
+When operations fail, agents should provide actionable guidance:
+
+| Error Code | Meaning | Agent Response |
+|------------|---------|----------------|
+| `INSUFFICIENT_FUNDS` | Not enough tokens | "You need X more USDC. Would you like to bridge some from mainnet?" |
+| `DAILY_LIMIT_EXCEEDED` | Safety limit hit | "Daily limit reached. You can send X more, or wait until tomorrow." |
+| `RECIPIENT_BLOCKED` | Address is blocked | "This address is blocked. Please verify the recipient." |
+| `BRIDGE_ROUTE_UNAVAILABLE` | No bridge to destination | "CCTP bridging isn't available to this chain. Try a different L2." |
+| `APPROVAL_DENIED` | Human rejected | "The transaction was not approved. Would you like to try a smaller amount?" |

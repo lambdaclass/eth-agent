@@ -5,7 +5,7 @@
 
 import type { AgentWallet } from '../agent/index.js';
 import type { Address } from '../core/types.js';
-import { STABLECOINS, type StablecoinInfo } from '../stablecoins/tokens.js';
+import { STABLECOINS, type StablecoinInfo, getStablecoinsForChain } from '../stablecoins/tokens.js';
 
 /**
  * Resolve stablecoin by symbol
@@ -25,6 +25,10 @@ const SUPPORTED_CHAINS: Record<number, string> = {
   8453: 'Base',
   42161: 'Arbitrum',
   43114: 'Avalanche',
+  167000: 'Taiko',
+  534352: 'Scroll',
+  59144: 'Linea',
+  324: 'zkSync Era',
   // Testnets
   11155111: 'Sepolia',
   11155420: 'OP Sepolia',
@@ -32,6 +36,10 @@ const SUPPORTED_CHAINS: Record<number, string> = {
   421614: 'Arbitrum Sepolia',
   80002: 'Polygon Amoy',
   43113: 'Avalanche Fuji',
+  167009: 'Taiko Hekla',
+  534351: 'Scroll Sepolia',
+  59141: 'Linea Sepolia',
+  300: 'zkSync Sepolia',
 };
 
 export interface ToolDefinition {
@@ -954,6 +962,87 @@ Returns a tracking ID to monitor bridge progress.`,
             success: false,
             error: (err as Error).message,
             summary: `Failed to get bridge limits: ${(err as Error).message}`,
+          };
+        }
+      },
+      metadata: {
+        category: 'info',
+        requiresApproval: false,
+        riskLevel: 'none',
+      },
+    },
+
+    // === Network Information ===
+    {
+      name: 'eth_getNetworks',
+      description: `List all supported networks with their details. Use this to find available L2 networks for lower fees.
+
+Supported networks include:
+- Ethereum Mainnet
+- L2s: Arbitrum, Optimism, Base, Polygon, Taiko, Scroll, Linea, zkSync Era
+- Testnets: Sepolia, and L2 testnets`,
+      parameters: {
+        type: 'object',
+        properties: {},
+        required: [],
+      },
+      handler: async () => {
+        const networks = Object.entries(SUPPORTED_CHAINS).map(([chainId, name]) => {
+          const id = parseInt(chainId);
+          const isTestnet = id > 10000 && id !== 42161 && id !== 43114 && id !== 167000 && id !== 534352 && id !== 59144;
+          const isL2 = !isTestnet && id !== 1;
+          return {
+            name: name.toLowerCase().replace(/\s+/g, '-'),
+            chainId: id,
+            type: isTestnet ? 'testnet' : isL2 ? 'L2' : 'L1',
+            displayName: name,
+          };
+        });
+
+        const l2s = networks.filter(n => n.type === 'L2');
+        return {
+          success: true,
+          data: { networks },
+          summary: `${l2s.length} L2 networks available for lower fees: ${l2s.map(n => n.displayName).join(', ')}`,
+        };
+      },
+      metadata: {
+        category: 'info',
+        requiresApproval: false,
+        riskLevel: 'none',
+      },
+    },
+
+    {
+      name: 'eth_getNetworkInfo',
+      description: 'Get information about the current network including chain ID and available stablecoins.',
+      parameters: {
+        type: 'object',
+        properties: {},
+        required: [],
+      },
+      handler: async () => {
+        try {
+          const caps = wallet.getCapabilities();
+          const chainId = caps.network.chainId;
+          const available = getStablecoinsForChain(chainId);
+          const networkName = SUPPORTED_CHAINS[chainId] || `Chain ${chainId}`;
+
+          return {
+            success: true,
+            data: {
+              chainId,
+              name: networkName,
+              walletAddress: caps.address,
+              availableStablecoins: Array.from(available.keys()),
+            },
+            summary: `Connected to ${networkName} (${chainId}). Stablecoins: ${Array.from(available.keys()).join(', ') || 'none'}`,
+          };
+        } catch (err) {
+          return {
+            success: false,
+            error: (err as Error).message,
+            summary: `Failed to get network info: ${(err as Error).message}`,
           };
         }
       },

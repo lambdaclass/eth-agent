@@ -79,7 +79,7 @@ export interface AgentWalletConfig {
   privateKey?: Hex | string;
 
   // Network
-  network?: 'mainnet' | 'sepolia' | 'goerli' | string;
+  network?: 'mainnet' | 'sepolia' | 'goerli' | 'taiko' | 'taiko-hekla' | 'scroll' | 'scroll-sepolia' | 'linea' | 'linea-sepolia' | 'zksync' | 'zksync-sepolia' | string;
   rpcUrl?: string;
 
   // Safety
@@ -374,6 +374,30 @@ export class AgentWallet {
           break;
         case 'goerli':
           rpcUrl = 'https://goerli.drpc.org';
+          break;
+        case 'taiko':
+          rpcUrl = 'https://rpc.mainnet.taiko.xyz';
+          break;
+        case 'taiko-hekla':
+          rpcUrl = 'https://rpc.hekla.taiko.xyz';
+          break;
+        case 'scroll':
+          rpcUrl = 'https://rpc.scroll.io';
+          break;
+        case 'scroll-sepolia':
+          rpcUrl = 'https://sepolia-rpc.scroll.io';
+          break;
+        case 'linea':
+          rpcUrl = 'https://rpc.linea.build';
+          break;
+        case 'linea-sepolia':
+          rpcUrl = 'https://rpc.sepolia.linea.build';
+          break;
+        case 'zksync':
+          rpcUrl = 'https://mainnet.era.zksync.io';
+          break;
+        case 'zksync-sepolia':
+          rpcUrl = 'https://sepolia.era.zksync.dev';
           break;
         default:
           rpcUrl = config.network ?? 'https://eth.llamarpc.com';
@@ -957,6 +981,16 @@ export class AgentWallet {
   // ============ Bridge Methods ============
 
   /**
+   * Get the chain ID, caching the result
+   */
+  async getChainId(): Promise<number> {
+    if (this.cachedChainId === undefined) {
+      this.cachedChainId = await this.rpc.getChainId();
+    }
+    return this.cachedChainId;
+  }
+
+  /**
    * Get or create a cached CCTPBridge instance
    */
   private async getBridge(): Promise<CCTPBridge> {
@@ -969,16 +1003,6 @@ export class AgentWallet {
       });
     }
     return this.cachedBridge;
-  }
-
-  /**
-   * Get cached chain ID
-   */
-  private async getChainId(): Promise<number> {
-    if (!this.cachedChainId) {
-      this.cachedChainId = await this.rpc.getChainId();
-    }
-    return this.cachedChainId;
   }
 
   /**
