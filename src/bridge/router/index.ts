@@ -25,6 +25,7 @@ import {
 } from '../errors.js';
 import { getChainName } from '../constants.js';
 import { CCTPAdapter } from '../protocols/cctp-adapter.js';
+import { AcrossAdapter } from '../protocols/across-adapter.js';
 import { RouteSelector } from './selector.js';
 import { ExplainBridge } from './explain.js';
 import {
@@ -65,7 +66,10 @@ export class BridgeRouter {
     this.account = config.account;
     this.limitsEngine = config.limitsEngine;
     this.debug = config.debug ?? false;
-    this.ethPriceUSD = config.ethPriceUSD ?? 2000;
+    if (config.ethPriceUSD === undefined) {
+      throw new Error('ethPriceUSD is required for accurate fee calculations');
+    }
+    this.ethPriceUSD = config.ethPriceUSD;
 
     this.selector = new RouteSelector();
     this.explainer = new ExplainBridge();
@@ -853,13 +857,21 @@ export class BridgeRouter {
   }
 
   private registerDefaultProtocols(): void {
-    // Register CCTP adapter
+    // Register CCTP adapter (highest priority for USDC - no fees, no slippage)
     const cctpAdapter = new CCTPAdapter({
       sourceRpc: this.sourceRpc,
       account: this.account,
+      ethPriceUSD: this.ethPriceUSD,
     });
+    this.registerProtocol(cctpAdapter, { priority: 100 });
 
-    this.registerProtocol(cctpAdapter, { priority: 100 }); // High priority for CCTP
+    // Register Across adapter (fast, supports multiple tokens)
+    const acrossAdapter = new AcrossAdapter({
+      sourceRpc: this.sourceRpc,
+      account: this.account,
+      ethPriceUSD: this.ethPriceUSD,
+    });
+    this.registerProtocol(acrossAdapter, { priority: 80 });
   }
 
   private async getProtocolsForRoute(
