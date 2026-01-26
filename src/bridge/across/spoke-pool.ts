@@ -10,6 +10,7 @@ import { encodeParameters } from '../../core/abi.js';
 import { concatHex } from '../../core/hex.js';
 import { TransactionBuilder } from '../../protocol/transaction.js';
 import { GasOracle } from '../../protocol/gas.js';
+import { NonceManager } from '../../protocol/nonce.js';
 
 /**
  * SpokePool V3 ABI (deposit functions)
@@ -150,12 +151,14 @@ export class SpokePoolContract {
   private readonly account: Account;
   readonly spokePoolAddress: Address;
   private readonly gasOracle: GasOracle;
+  private readonly nonceManager: NonceManager;
 
   constructor(config: { rpc: RPCClient; account: Account; spokePoolAddress: Address }) {
     this.rpc = config.rpc;
     this.account = config.account;
     this.spokePoolAddress = config.spokePoolAddress;
     this.gasOracle = new GasOracle(config.rpc);
+    this.nonceManager = new NonceManager({ rpc: config.rpc, address: config.account.address });
   }
 
   /**
@@ -201,6 +204,20 @@ export class SpokePoolContract {
       message = '0x' as Hex,
     } = params;
 
+    // Validate deadlines (Issue #7: Missing deadline validation)
+    const currentTime = Math.floor(Date.now() / 1000);
+    if (fillDeadline <= currentTime) {
+      throw new Error(`fillDeadline ${fillDeadline} is in the past (current: ${currentTime})`);
+    }
+    // quoteTimestamp should be recent (within last 5 minutes) but not in the future
+    const maxQuoteAge = 300; // 5 minutes
+    if (quoteTimestamp > currentTime + 60) {
+      throw new Error(`quoteTimestamp ${quoteTimestamp} is too far in the future`);
+    }
+    if (currentTime - quoteTimestamp > maxQuoteAge) {
+      throw new Error(`quoteTimestamp ${quoteTimestamp} is stale (older than ${maxQuoteAge}s)`);
+    }
+
     // Encode the function call
     // depositV3(address,address,address,address,uint256,uint256,uint256,address,uint32,uint32,uint32,bytes)
     // selector: 0x7b939232
@@ -240,16 +257,21 @@ export class SpokePoolContract {
 
     const data = concatHex(selector, encodedParams);
 
-    // Estimate gas
-    const gasEstimate = await this.gasOracle.estimateGas({
-      to: this.spokePoolAddress,
-      from: this.account.address,
-      data,
-      value: 0n,
-    });
+    // Estimate gas (Issue #4: Add error handling)
+    let gasEstimate;
+    try {
+      gasEstimate = await this.gasOracle.estimateGas({
+        to: this.spokePoolAddress,
+        from: this.account.address,
+        data,
+        value: 0n,
+      });
+    } catch (error) {
+      throw new Error(`Gas estimation failed - deposit will likely revert: ${(error as Error).message}`);
+    }
 
-    // Get nonce and chain ID
-    const nonce = await this.rpc.getTransactionCount(this.account.address);
+    // Get nonce using NonceManager (Issue #1: Fix nonce race condition)
+    const nonce = await this.nonceManager.getNextNonce();
     const chainId = await this.rpc.getChainId();
 
     // Build transaction
@@ -272,10 +294,23 @@ export class SpokePoolContract {
 
     // Sign and send
     const signed = builder.sign(this.account);
-    const txHash = await this.rpc.sendRawTransaction(signed.raw);
+    let txHash: Hash;
+    try {
+      txHash = await this.rpc.sendRawTransaction(signed.raw);
+    } catch (error) {
+      await this.nonceManager.onTransactionFailed();
+      throw error;
+    }
 
     // Wait for confirmation
-    const receipt = await this.rpc.waitForTransaction(txHash);
+    let receipt;
+    try {
+      receipt = await this.rpc.waitForTransaction(txHash);
+      this.nonceManager.onTransactionConfirmed();
+    } catch (error) {
+      await this.nonceManager.onTransactionFailed();
+      throw error;
+    }
 
     // Parse the deposit event to get depositId
     const depositEvent = this.parseDepositEvent(receipt.logs);
@@ -318,13 +353,33 @@ export class SpokePoolContract {
     topics: Hex[];
     data: Hex;
   }): V3FundsDepositedEvent {
+    // Issue #10: Validate event structure before accessing
+    if (log.topics.length < 4) {
+      throw new Error('Invalid V3FundsDeposited event: insufficient topics');
+    }
+
+    // Issue #3: Use safe number conversion with overflow check
+    const safeToNumber = (value: bigint, name: string): number => {
+      if (value > BigInt(Number.MAX_SAFE_INTEGER)) {
+        throw new Error(`${name} ${value} exceeds safe integer range`);
+      }
+      return Number(value);
+    };
+
     // Indexed parameters from topics
-    const destinationChainId = Number(BigInt(log.topics[1] ?? '0x0'));
-    const depositId = Number(BigInt(log.topics[2] ?? '0x0'));
+    const destinationChainIdBigInt = BigInt(log.topics[1] ?? '0x0');
+    const depositIdBigInt = BigInt(log.topics[2] ?? '0x0');
+    const destinationChainId = safeToNumber(destinationChainIdBigInt, 'destinationChainId');
+    const depositId = safeToNumber(depositIdBigInt, 'depositId');
     const depositor = ('0x' + (log.topics[3] ?? '').slice(26)) as Address;
 
     // Non-indexed parameters from data
     const data = log.data.slice(2); // Remove 0x prefix
+
+    // Issue #10: Validate data length (minimum required: 832 hex chars = 416 bytes)
+    if (data.length < 832) {
+      throw new Error(`Invalid V3FundsDeposited event: data too short (${data.length} < 832)`);
+    }
 
     // Helper to safely parse hex to BigInt (returns 0n for empty/invalid)
     const safeBigInt = (hex: string): bigint => {
@@ -332,8 +387,11 @@ export class SpokePoolContract {
       return BigInt('0x' + hex);
     };
 
-    // Helper to safely parse hex to number
-    const safeNumber = (hex: string): number => Number(safeBigInt(hex));
+    // Helper to safely parse hex to number with overflow check
+    const safeNumber = (hex: string, name: string): number => {
+      const value = safeBigInt(hex);
+      return safeToNumber(value, name);
+    };
 
     // Each 32-byte segment (64 hex chars)
     const inputToken = ('0x' + data.slice(24, 64)) as Address;
@@ -342,9 +400,9 @@ export class SpokePoolContract {
     const outputAmount = safeBigInt(data.slice(192, 256));
     // Skip destinationChainId at 256-320 (already from topics)
     // Skip depositId at 320-384 (already from topics)
-    const quoteTimestamp = safeNumber(data.slice(384, 448));
-    const fillDeadline = safeNumber(data.slice(448, 512));
-    const exclusivityDeadline = safeNumber(data.slice(512, 576));
+    const quoteTimestamp = safeNumber(data.slice(384, 448), 'quoteTimestamp');
+    const fillDeadline = safeNumber(data.slice(448, 512), 'fillDeadline');
+    const exclusivityDeadline = safeNumber(data.slice(512, 576), 'exclusivityDeadline');
     // Skip depositor at 576-640 (already from topics)
     const recipient = ('0x' + data.slice(664, 704)) as Address;
     const exclusiveRelayer = ('0x' + data.slice(728, 768)) as Address;
@@ -352,9 +410,9 @@ export class SpokePoolContract {
     const messageOffsetHex = data.slice(768, 832);
     let message: Hex = '0x' as Hex;
     if (messageOffsetHex && messageOffsetHex.length > 0) {
-      const messageOffset = safeNumber(messageOffsetHex) * 2;
+      const messageOffset = safeNumber(messageOffsetHex, 'messageOffset') * 2;
       if (messageOffset > 0 && messageOffset + 64 <= data.length) {
-        const messageLength = safeNumber(data.slice(messageOffset, messageOffset + 64)) * 2;
+        const messageLength = safeNumber(data.slice(messageOffset, messageOffset + 64), 'messageLength') * 2;
         if (messageLength > 0 && messageOffset + 64 + messageLength <= data.length) {
           message = ('0x' + data.slice(messageOffset + 64, messageOffset + 64 + messageLength)) as Hex;
         }

@@ -48,6 +48,16 @@ const createMockAccount = () => ({
 
 const SPOKE_POOL_ADDRESS = '0x5c7BCd6E7De5423a257D81B442095A1a6ced35C5' as Address;
 
+// Helper to generate valid timestamps for tests
+const getValidTimestamps = () => {
+  const now = Math.floor(Date.now() / 1000);
+  return {
+    quoteTimestamp: now - 10, // 10 seconds ago (valid, recent)
+    fillDeadline: now + 18000, // 5 hours in the future
+    exclusivityDeadline: now + 300, // 5 minutes in the future
+  };
+};
+
 describe('SpokePool', () => {
   let mockRpc: ReturnType<typeof createMockRpc>;
   let mockAccount: ReturnType<typeof createMockAccount>;
@@ -177,6 +187,7 @@ describe('SpokePool', () => {
           spokePoolAddress: SPOKE_POOL_ADDRESS,
         });
 
+        const timestamps = getValidTimestamps();
         const result = await contract.depositV3({
           depositor: '0x1234567890123456789012345678901234567890' as Address,
           recipient: '0x2345678901234567890123456789012345678901' as Address,
@@ -185,8 +196,8 @@ describe('SpokePool', () => {
           inputAmount: 100000000n, // 100 USDC
           outputAmount: 99500000n, // 99.5 USDC after fees
           destinationChainId: 42161,
-          quoteTimestamp: 1704067200,
-          fillDeadline: 1704067200 + 18000,
+          quoteTimestamp: timestamps.quoteTimestamp,
+          fillDeadline: timestamps.fillDeadline,
         });
 
         expect(result.txHash).toBe('0xabcd1234');
@@ -216,6 +227,7 @@ describe('SpokePool', () => {
           spokePoolAddress: SPOKE_POOL_ADDRESS,
         });
 
+        const timestamps = getValidTimestamps();
         const result = await contract.depositV3({
           depositor: '0x1234567890123456789012345678901234567890' as Address,
           recipient: '0x2345678901234567890123456789012345678901' as Address,
@@ -224,8 +236,8 @@ describe('SpokePool', () => {
           inputAmount: 100000000n,
           outputAmount: 99500000n,
           destinationChainId: 42161,
-          quoteTimestamp: 1704067200,
-          fillDeadline: 1704067200 + 18000,
+          quoteTimestamp: timestamps.quoteTimestamp,
+          fillDeadline: timestamps.fillDeadline,
         });
 
         expect(result.txHash).toBe('0xabcd1234');
@@ -247,6 +259,7 @@ describe('SpokePool', () => {
           spokePoolAddress: SPOKE_POOL_ADDRESS,
         });
 
+        const timestamps = getValidTimestamps();
         await contract.depositV3({
           depositor: '0x1234567890123456789012345678901234567890' as Address,
           recipient: '0x2345678901234567890123456789012345678901' as Address,
@@ -255,14 +268,60 @@ describe('SpokePool', () => {
           inputAmount: 100000000n,
           outputAmount: 99500000n,
           destinationChainId: 42161,
-          quoteTimestamp: 1704067200,
-          fillDeadline: 1704067200 + 18000,
+          quoteTimestamp: timestamps.quoteTimestamp,
+          fillDeadline: timestamps.fillDeadline,
           exclusiveRelayer: '0x9999999999999999999999999999999999999999' as Address,
-          exclusivityDeadline: 1704067200 + 300,
+          exclusivityDeadline: timestamps.exclusivityDeadline,
           message: '0xdeadbeef' as Hex,
         });
 
         expect(mockRpc.sendRawTransaction).toHaveBeenCalled();
+      });
+
+      it('should reject fillDeadline in the past', async () => {
+        const contract = new SpokePoolContract({
+          rpc: mockRpc as any,
+          account: mockAccount as any,
+          spokePoolAddress: SPOKE_POOL_ADDRESS,
+        });
+
+        const now = Math.floor(Date.now() / 1000);
+        await expect(
+          contract.depositV3({
+            depositor: '0x1234567890123456789012345678901234567890' as Address,
+            recipient: '0x2345678901234567890123456789012345678901' as Address,
+            inputToken: '0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48' as Address,
+            outputToken: '0xaf88d065e77c8cC2239327C5EDb3A432268e5831' as Address,
+            inputAmount: 100000000n,
+            outputAmount: 99500000n,
+            destinationChainId: 42161,
+            quoteTimestamp: now - 10,
+            fillDeadline: now - 100, // In the past
+          })
+        ).rejects.toThrow('fillDeadline');
+      });
+
+      it('should reject stale quoteTimestamp', async () => {
+        const contract = new SpokePoolContract({
+          rpc: mockRpc as any,
+          account: mockAccount as any,
+          spokePoolAddress: SPOKE_POOL_ADDRESS,
+        });
+
+        const now = Math.floor(Date.now() / 1000);
+        await expect(
+          contract.depositV3({
+            depositor: '0x1234567890123456789012345678901234567890' as Address,
+            recipient: '0x2345678901234567890123456789012345678901' as Address,
+            inputToken: '0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48' as Address,
+            outputToken: '0xaf88d065e77c8cC2239327C5EDb3A432268e5831' as Address,
+            inputAmount: 100000000n,
+            outputAmount: 99500000n,
+            destinationChainId: 42161,
+            quoteTimestamp: now - 600, // 10 minutes ago (stale)
+            fillDeadline: now + 18000,
+          })
+        ).rejects.toThrow('stale');
       });
     });
 

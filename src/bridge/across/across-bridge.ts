@@ -3,7 +3,7 @@
  * Handles the complete bridge flow using Across Protocol
  */
 
-import type { Address, Hex } from '../../core/types.js';
+import type { Address, Hex, Hash } from '../../core/types.js';
 import type { RPCClient } from '../../protocol/rpc.js';
 import type { Account } from '../../protocol/account.js';
 import type { StablecoinInfo } from '../../stablecoins/index.js';
@@ -14,6 +14,7 @@ import {
 } from '../../stablecoins/index.js';
 import { TransactionBuilder } from '../../protocol/transaction.js';
 import { GasOracle } from '../../protocol/gas.js';
+import { NonceManager } from '../../protocol/nonce.js';
 import type { BridgeRequest, BridgeInitResult, BridgeStatusResult, BridgeStatus } from '../types.js';
 import { BridgeUnsupportedRouteError, BridgeCompletionError, BridgeLimitError } from '../errors.js';
 import {
@@ -103,6 +104,7 @@ export class AcrossBridge {
   private readonly account: Account;
   private readonly testnet?: boolean;
   private readonly gasOracle: GasOracle;
+  private readonly nonceManager: NonceManager;
 
   private cachedChainId?: number;
   private spokePool?: SpokePoolContract;
@@ -113,6 +115,7 @@ export class AcrossBridge {
     this.account = config.account;
     this.testnet = config.testnet; // Will be auto-detected in getApiClient if undefined
     this.gasOracle = new GasOracle(config.sourceRpc);
+    this.nonceManager = new NonceManager({ rpc: config.sourceRpc, address: config.account.address });
   }
 
   /**
@@ -192,13 +195,20 @@ export class AcrossBridge {
     const outputAmount = quoteResponse.outputAmount
       ? BigInt(quoteResponse.outputAmount)
       : amount - totalFee;
+    // Issue #8: Use bigint arithmetic for fee calculation to avoid precision loss
     // pct can be in two formats:
     // - 1e18 precision (API): "12312744091431953" = 1.23%
     // - Decimal string (tests): "0.005" = 0.5%
-    const pctValue = Number(quoteResponse.totalRelayFee.pct);
-    const feeBps = pctValue > 1
-      ? Math.round(pctValue / 1e14) // 1e18 precision → basis points
-      : Math.round(pctValue * 10000); // Decimal → basis points
+    const pctString = quoteResponse.totalRelayFee.pct;
+    let feeBps: number;
+    if (pctString.includes('.')) {
+      // Decimal format (tests): "0.005" = 0.5% = 50 bps
+      feeBps = Math.round(Number(pctString) * 10000);
+    } else {
+      // 1e18 precision (API): divide by 1e14 to get basis points
+      const pctBigInt = BigInt(pctString);
+      feeBps = Number(pctBigInt / 10n ** 14n);
+    }
 
     return {
       inputAmount: amount,
@@ -551,7 +561,25 @@ export class AcrossBridge {
       return; // Already approved
     }
 
-    // Approve exact amount
+    // Issue #9: Some tokens (like USDT) require resetting allowance to 0 first
+    // if there's an existing non-zero allowance
+    if (allowance > 0n) {
+      await this.sendApprovalTx(tokenAddress, spender, 0n);
+    }
+
+    // Approve the requested amount
+    await this.sendApprovalTx(tokenAddress, spender, amount);
+  }
+
+  /**
+   * Send an approval transaction
+   * Issue #2: Uses NonceManager to prevent race conditions
+   */
+  private async sendApprovalTx(
+    tokenAddress: Address,
+    spender: Address,
+    amount: bigint
+  ): Promise<void> {
     const approveData =
       `0x095ea7b3000000000000000000000000${spender.slice(2)}${amount.toString(16).padStart(64, '0')}` as Hex;
 
@@ -563,8 +591,8 @@ export class AcrossBridge {
       value: 0n,
     });
 
-    // Get nonce and chain ID
-    const nonce = await this.sourceRpc.getTransactionCount(this.account.address);
+    // Get nonce using NonceManager (Issue #2: Fix nonce race condition)
+    const nonce = await this.nonceManager.getNextNonce();
     const chainId = await this.sourceRpc.getChainId();
 
     // Build transaction
@@ -587,10 +615,22 @@ export class AcrossBridge {
 
     // Sign and send
     const signed = builder.sign(this.account);
-    const txHash = await this.sourceRpc.sendRawTransaction(signed.raw);
+    let txHash: Hash;
+    try {
+      txHash = await this.sourceRpc.sendRawTransaction(signed.raw);
+    } catch (error) {
+      await this.nonceManager.onTransactionFailed();
+      throw error;
+    }
 
     // Wait for approval tx
-    await this.sourceRpc.waitForTransaction(txHash);
+    try {
+      await this.sourceRpc.waitForTransaction(txHash);
+      this.nonceManager.onTransactionConfirmed();
+    } catch (error) {
+      await this.nonceManager.onTransactionFailed();
+      throw error;
+    }
   }
 
   private sleep(ms: number): Promise<void> {

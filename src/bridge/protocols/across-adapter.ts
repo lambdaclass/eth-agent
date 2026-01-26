@@ -276,14 +276,20 @@ export class AcrossAdapter extends BaseBridgeAdapter {
 
   /**
    * Check if cached quote is valid for the given request
+   * Issue #6: Also validates quote expiry, not just cache TTL
    */
   private isCacheValid(request: BridgeRequest, now: number): boolean {
     if (!this.cachedQuote) return false;
 
-    const { request: cachedReq, fetchedAt } = this.cachedQuote;
+    const { request: cachedReq, fetchedAt, quote } = this.cachedQuote;
 
     // Check TTL
     if (now - fetchedAt > this.quoteCacheTTL) return false;
+
+    // Issue #6: Check quote expiry (Across quotes are typically valid for ~60s)
+    // Use a 55s threshold to provide safety margin
+    const quoteAgeMs = now - quote.quoteTimestamp * 1000;
+    if (quoteAgeMs > 55000) return false;
 
     // Check request parameters match
     return (

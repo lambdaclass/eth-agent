@@ -50,25 +50,34 @@ const createMockAccount = () => ({
   signTypedData: vi.fn(),
 });
 
-// Mock quote response
-const createMockQuoteResponse = (overrides = {}) => ({
-  totalRelayFee: { total: '500000', pct: '0.005' },
-  relayerCapitalFee: { total: '300000', pct: '0.003' },
-  relayerGasFee: { total: '150000', pct: '0.0015' },
-  lpFee: { total: '50000', pct: '0.0005' },
-  timestamp: 1704067200,
-  isAmountTooLow: false,
-  quoteBlock: 12345678,
-  spokePoolAddress: '0x5c7BCd6E7De5423a257D81B442095A1a6ced35C5',
-  expectedFillTimeSec: 120,
-  limits: {
-    minDeposit: '1000000',
-    maxDeposit: '1000000000000',
-    maxDepositInstant: '100000000000',
-    maxDepositShortDelay: '500000000000',
-  },
-  ...overrides,
-});
+// Helper to generate valid timestamps for tests
+const getValidTimestamp = () => Math.floor(Date.now() / 1000) - 10; // 10 seconds ago
+
+// Mock quote response with dynamic timestamp
+const createMockQuoteResponse = (overrides = {}) => {
+  const timestamp = getValidTimestamp();
+  return {
+    totalRelayFee: { total: '500000', pct: '0.005' },
+    relayerCapitalFee: { total: '300000', pct: '0.003' },
+    relayerGasFee: { total: '150000', pct: '0.0015' },
+    lpFee: { total: '50000', pct: '0.0005' },
+    timestamp,
+    fillDeadline: timestamp + 18000, // 5 hours from quote
+    isAmountTooLow: false,
+    quoteBlock: 12345678,
+    spokePoolAddress: '0x5c7BCd6E7De5423a257D81B442095A1a6ced35C5',
+    expectedFillTimeSec: 120,
+    exclusiveRelayer: '0x0000000000000000000000000000000000000000',
+    exclusivityDeadline: 0,
+    limits: {
+      minDeposit: '1000000',
+      maxDeposit: '1000000000000',
+      maxDepositInstant: '100000000000',
+      maxDepositShortDelay: '500000000000',
+    },
+    ...overrides,
+  };
+};
 
 describe('AcrossBridge', () => {
   let mockRpc: ReturnType<typeof createMockRpc>;

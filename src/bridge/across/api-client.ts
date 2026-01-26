@@ -233,9 +233,11 @@ export class AcrossApiClient {
 
     // Normalize the response (API returns some fields as strings)
     const timestamp = typeof raw.timestamp === 'string' ? parseInt(raw.timestamp, 10) : raw.timestamp;
+    // Issue #5: Use current time for fallback, not quote timestamp (which could be stale/cached)
+    const currentTime = Math.floor(Date.now() / 1000);
     const fillDeadline = raw.fillDeadline
       ? (typeof raw.fillDeadline === 'string' ? parseInt(raw.fillDeadline, 10) : raw.fillDeadline)
-      : timestamp + 18000; // Default: 5 hours from quote
+      : currentTime + 18000; // Default: 5 hours from NOW, not from quote timestamp
 
     return {
       totalRelayFee: raw.totalRelayFee,
