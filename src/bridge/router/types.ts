@@ -25,6 +25,12 @@ export interface BridgeRouterConfig {
   limitsEngine?: LimitsEngine;
   /** Enable debug logging */
   debug?: boolean;
+  /**
+   * ETH price in USD for gas fee estimation.
+   * In production, consider fetching from a price oracle.
+   * @default 2000
+   */
+  ethPriceUSD?: number;
 }
 
 /**

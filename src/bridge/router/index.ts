@@ -4,10 +4,8 @@
  */
 
 import type { Hash, Hex } from '../../core/types.js';
-import type { Account } from '../../protocol/account.js';
-import type { RPCClient } from '../../protocol/rpc.js';
-import type { LimitsEngine } from '../../agent/limits.js';
-import { USDC, formatStablecoinAmount, parseStablecoinAmount } from '../../stablecoins/index.js';
+import type { StablecoinInfo } from '../../stablecoins/index.js';
+import { formatStablecoinAmount, parseStablecoinAmount } from '../../stablecoins/index.js';
 import {
   type BridgeProtocolV2,
   type BridgeRequest,
@@ -22,6 +20,8 @@ import {
 import {
   BridgeNoRouteError,
   BridgeProtocolUnavailableError,
+  BridgeQuoteExpiredError,
+  BridgeValidationError,
 } from '../errors.js';
 import { getChainName } from '../constants.js';
 import { CCTPAdapter } from '../protocols/cctp-adapter.js';
@@ -32,21 +32,31 @@ import {
   type RouteInfo,
   type ProtocolRegistryEntry,
   type WaitOptions,
-  generateTrackingId,
 } from './types.js';
+import {
+  TrackingRegistry,
+  type ProtocolTrackingInfo,
+} from './tracking.js';
+import {
+  BridgeValidator,
+  type ValidationResult,
+} from './validation.js';
 
 /**
  * BridgeRouter - Main class for bridge routing and execution
  */
 export class BridgeRouter {
-  private readonly sourceRpc: RPCClient;
-  private readonly account: Account;
-  private readonly limitsEngine?: LimitsEngine;
+  private readonly sourceRpc: BridgeRouterConfig['sourceRpc'];
+  private readonly account: BridgeRouterConfig['account'];
+  private readonly limitsEngine?: BridgeRouterConfig['limitsEngine'];
   private readonly debug: boolean;
+  private readonly ethPriceUSD: number;
 
   private readonly protocols: Map<string, ProtocolRegistryEntry> = new Map();
   private readonly selector: RouteSelector;
   private readonly explainer: ExplainBridge;
+  private readonly trackingRegistry: TrackingRegistry;
+  private readonly validator: BridgeValidator;
 
   private cachedChainId?: number;
 
@@ -55,9 +65,12 @@ export class BridgeRouter {
     this.account = config.account;
     this.limitsEngine = config.limitsEngine;
     this.debug = config.debug ?? false;
+    this.ethPriceUSD = config.ethPriceUSD ?? 2000;
 
     this.selector = new RouteSelector();
     this.explainer = new ExplainBridge();
+    this.trackingRegistry = new TrackingRegistry();
+    this.validator = new BridgeValidator();
 
     // Register default protocol (CCTP)
     this.registerDefaultProtocols();
@@ -102,6 +115,24 @@ export class BridgeRouter {
   }
 
   // ============ Discovery ============
+
+  /**
+   * Get minimum bridge amount for a token
+   */
+  getMinBridgeAmount(token: StablecoinInfo): {
+    raw: bigint;
+    formatted: string;
+    usd: number;
+  } {
+    return this.validator.getMinBridgeAmount(token);
+  }
+
+  /**
+   * Validate a bridge request
+   */
+  validateRequest(request: BridgeRequest, quote?: BridgeQuote): ValidationResult {
+    return this.validator.validateRequest(request, quote);
+  }
 
   /**
    * Get protocols that support a token
@@ -369,8 +400,38 @@ export class BridgeRouter {
       });
     }
 
+    // Validate the request
+    const validationResult = this.validator.validateRequest(request, comparison.recommended);
+    if (!validationResult.valid) {
+      throw new BridgeValidationError({
+        errors: validationResult.errors.map((e) => ({
+          code: e.code,
+          message: e.message,
+          field: e.field,
+        })),
+      });
+    }
+
+    // Check quote expiry - refresh if needed
+    let quote = comparison.recommended;
+    if (quote.expiry && new Date() > quote.expiry) {
+      if (this.debug) {
+        console.log(`[BridgeRouter] Quote expired, fetching fresh quote from ${quote.protocol}`);
+      }
+      // Re-fetch fresh quote from the same protocol
+      quote = await this.getQuote(quote.protocol, request);
+
+      // Validate the new quote hasn't already expired
+      if (quote.expiry && new Date() > quote.expiry) {
+        throw new BridgeQuoteExpiredError({
+          protocol: quote.protocol,
+          expiredAt: quote.expiry,
+        });
+      }
+    }
+
     // Execute via recommended protocol
-    return this.bridgeVia(comparison.recommended.protocol, request);
+    return this.bridgeVia(quote.protocol, request);
   }
 
   /**
@@ -404,6 +465,9 @@ export class BridgeRouter {
     const fees = await protocol.estimateFees(request);
     const totalFee = fees.protocolFee + fees.gasFee;
 
+    // Calculate fee in USD (gas is in wei, need to convert to ETH then to USD)
+    const feeInUSD = fees.totalUSD ?? this.estimateGasFeeInUSD(fees.gasFee);
+
     // Execute bridge
     const result = await protocol.initiateBridge(request);
 
@@ -416,11 +480,11 @@ export class BridgeRouter {
       );
     }
 
-    // Generate tracking ID
-    const trackingId = generateTrackingId({
-      protocol: protocolName,
+    // Generate unified tracking ID using the registry
+    const trackingInfo: ProtocolTrackingInfo = this.extractTrackingInfo(protocolName, result);
+    const trackingId = this.trackingRegistry.createTrackingId({
+      info: trackingInfo,
       sourceChainId,
-      destinationChainId: request.destinationChainId,
     });
 
     const formattedAmount = formatStablecoinAmount(amount, request.token);
@@ -438,8 +502,8 @@ export class BridgeRouter {
       },
       fee: {
         raw: totalFee,
-        formatted: formatStablecoinAmount(totalFee, USDC), // Assume fee in same units
-        usd: Number(totalFee) / 1e6, // Rough USD conversion
+        formatted: this.formatGasFee(totalFee),
+        usd: feeInUSD,
       },
       sourceChain: {
         id: sourceChainId,
@@ -450,7 +514,7 @@ export class BridgeRouter {
         name: destChainName,
       },
       recipient: result.recipient,
-      estimatedTime: result.estimatedTime,
+      estimatedTime: this.buildEstimatedTime(protocol),
       summary: `Bridging ${formattedAmount} ${request.token.symbol} from ${sourceChainName} to ${destChainName} via ${protocolName}. Tracking ID: ${trackingId}`,
       protocolData: {
         messageHash: result.messageHash,
@@ -460,11 +524,94 @@ export class BridgeRouter {
     };
   }
 
+  /**
+   * Extract protocol-specific tracking info from bridge result
+   */
+  private extractTrackingInfo(
+    protocolName: string,
+    result: { messageHash: Hex; burnTxHash: Hash }
+  ): ProtocolTrackingInfo {
+    // Different protocols use different identifier types
+    const protocolLower = protocolName.toLowerCase();
+
+    if (protocolLower === 'cctp') {
+      return {
+        protocol: 'CCTP',
+        identifier: result.messageHash,
+        identifierType: 'messageHash',
+      };
+    }
+
+    if (protocolLower === 'across') {
+      // Across uses deposit IDs (would be extracted from logs in real implementation)
+      return {
+        protocol: 'Across',
+        identifier: result.burnTxHash, // Fallback to tx hash
+        identifierType: 'depositId',
+      };
+    }
+
+    if (protocolLower === 'stargate') {
+      return {
+        protocol: 'Stargate',
+        identifier: result.burnTxHash,
+        identifierType: 'txHash',
+      };
+    }
+
+    // Default fallback - use message hash if available
+    return {
+      protocol: protocolName,
+      identifier: result.messageHash ?? result.burnTxHash,
+      identifierType: 'messageHash',
+    };
+  }
+
   // ============ Tracking ============
 
   /**
-   * Get status of a bridge operation
-   * Note: Currently requires protocol name and message hash
+   * Get status of a bridge operation using unified tracking ID
+   *
+   * @param trackingId - Unified tracking ID (e.g., "bridge_cctp_1_0xabc...")
+   * @returns Bridge status
+   *
+   * @example
+   * ```typescript
+   * const status = await router.getStatus('bridge_cctp_1_0xabc123...');
+   * console.log(status.progress); // 50
+   * console.log(status.message);  // "Attestation in progress"
+   * ```
+   */
+  async getStatusByTrackingId(trackingId: string): Promise<UnifiedBridgeStatus> {
+    const parsed = this.trackingRegistry.parseTrackingId(trackingId);
+
+    if (!parsed) {
+      throw new BridgeProtocolUnavailableError({
+        protocol: 'unknown',
+        reason: `Invalid tracking ID format: ${trackingId}`,
+      });
+    }
+
+    const { protocol, identifier } = parsed;
+
+    // Find the protocol (case-insensitive)
+    const entry = this.findProtocolEntry(protocol);
+
+    if (!entry) {
+      throw new BridgeProtocolUnavailableError({
+        protocol,
+        reason: 'Protocol not registered',
+      });
+    }
+
+    const status = await entry.protocol.getStatus(identifier as Hex);
+
+    return this.buildUnifiedStatus(trackingId, entry.protocol.name, status);
+  }
+
+  /**
+   * Get status of a bridge operation (legacy method)
+   * @deprecated Use getStatusByTrackingId instead
    */
   async getStatus(
     protocolName: string,
@@ -481,6 +628,17 @@ export class BridgeRouter {
 
     const status = await entry.protocol.getStatus(messageHash);
 
+    return this.buildUnifiedStatus(messageHash, protocolName, status);
+  }
+
+  /**
+   * Build unified status from protocol status
+   */
+  private buildUnifiedStatus(
+    trackingId: string,
+    protocolName: string,
+    status: { status: BridgeStatus; updatedAt: Date; error?: string; attestation?: Hex }
+  ): UnifiedBridgeStatus {
     // Map internal status to progress percentage
     const progressMap: Record<BridgeStatus, number> = {
       pending_burn: 10,
@@ -502,11 +660,15 @@ export class BridgeRouter {
       failed: 'Bridge failed',
     };
 
+    // Extract identifier from tracking ID for source tx hash
+    const parsed = this.trackingRegistry.parseTrackingId(trackingId);
+    const identifier = parsed?.identifier ?? trackingId;
+
     return {
-      trackingId: messageHash, // Use message hash as tracking ID for now
+      trackingId,
       protocol: protocolName,
       status: status.status,
-      sourceTxHash: messageHash as Hash, // Approximate
+      sourceTxHash: identifier as Hash,
       amount: { raw: 0n, formatted: '0' }, // Not available from status
       progress: progressMap[status.status] ?? 0,
       message: statusMessages[status.status] ?? status.status,
@@ -516,7 +678,47 @@ export class BridgeRouter {
   }
 
   /**
-   * Wait for a bridge to complete
+   * Wait for a bridge to complete using tracking ID
+   *
+   * @param trackingId - Unified tracking ID
+   * @param options - Wait options
+   * @returns Attestation signature (for CCTP) or completion indicator
+   */
+  async waitForCompletionByTrackingId(
+    trackingId: string,
+    options?: WaitOptions
+  ): Promise<Hex> {
+    const parsed = this.trackingRegistry.parseTrackingId(trackingId);
+
+    if (!parsed) {
+      throw new BridgeProtocolUnavailableError({
+        protocol: 'unknown',
+        reason: `Invalid tracking ID format: ${trackingId}`,
+      });
+    }
+
+    const entry = this.findProtocolEntry(parsed.protocol);
+
+    if (!entry) {
+      throw new BridgeProtocolUnavailableError({
+        protocol: parsed.protocol,
+        reason: 'Protocol not registered',
+      });
+    }
+
+    // Wait for attestation
+    const attestation = await entry.protocol.waitForAttestation(parsed.identifier as Hex);
+
+    if (options?.onProgress) {
+      options.onProgress({ progress: 100, message: 'Attestation received' });
+    }
+
+    return attestation;
+  }
+
+  /**
+   * Wait for a bridge to complete (legacy method)
+   * @deprecated Use waitForCompletionByTrackingId instead
    */
   async waitForCompletion(
     protocolName: string,
@@ -540,6 +742,89 @@ export class BridgeRouter {
     }
 
     return attestation;
+  }
+
+  /**
+   * Find a protocol entry by name (case-insensitive)
+   */
+  private findProtocolEntry(protocolName: string): ProtocolRegistryEntry | undefined {
+    // Try exact match first
+    const exact = this.protocols.get(protocolName);
+    if (exact) return exact;
+
+    // Try case-insensitive match
+    const lowerName = protocolName.toLowerCase();
+    for (const [name, entry] of this.protocols) {
+      if (name.toLowerCase() === lowerName) {
+        return entry;
+      }
+    }
+
+    return undefined;
+  }
+
+  /**
+   * Estimate gas fee in USD
+   * Gas fee is in wei, convert to ETH then to USD
+   */
+  private estimateGasFeeInUSD(gasFeeWei: bigint): number {
+    const gasInEth = Number(gasFeeWei) / 1e18;
+    return Math.round(gasInEth * this.ethPriceUSD * 100) / 100;
+  }
+
+  /**
+   * Format gas fee for display (in ETH)
+   */
+  private formatGasFee(gasFeeWei: bigint): string {
+    const gasInEth = Number(gasFeeWei) / 1e18;
+    if (gasInEth < 0.0001) {
+      return `${(gasInEth * 1e6).toFixed(2)} µETH`;
+    } else if (gasInEth < 0.01) {
+      return `${(gasInEth * 1000).toFixed(4)} mETH`;
+    } else {
+      return `${gasInEth.toFixed(6)} ETH`;
+    }
+  }
+
+  /**
+   * Build structured estimated time from protocol info
+   */
+  private buildEstimatedTime(protocol: BridgeProtocolV2): {
+    minSeconds: number;
+    maxSeconds: number;
+    display: string;
+  } {
+    const estimatedTime = protocol.info?.estimatedTimeSeconds;
+
+    // Handle different formats
+    let min: number;
+    let max: number;
+
+    if (estimatedTime === undefined) {
+      // Default to 15-30 minutes if not specified
+      min = 900;
+      max = 1800;
+    } else if (typeof estimatedTime === 'number') {
+      // Single number - use as both min and max
+      min = estimatedTime;
+      max = estimatedTime;
+    } else {
+      // Object with min/max
+      min = estimatedTime.min;
+      max = estimatedTime.max;
+    }
+
+    const minMinutes = Math.round(min / 60);
+    const maxMinutes = Math.round(max / 60);
+    const display = min === max
+      ? `~${minMinutes} minutes`
+      : `${minMinutes}-${maxMinutes} minutes`;
+
+    return {
+      minSeconds: min,
+      maxSeconds: max,
+      display,
+    };
   }
 
   // ============ Explanation ============
@@ -646,3 +931,5 @@ export function createBridgeRouter(config: BridgeRouterConfig): BridgeRouter {
 export { RouteSelector, createRouteSelector } from './selector.js';
 export { ExplainBridge, createExplainer, type ExplanationLevel } from './explain.js';
 export * from './types.js';
+export * from './tracking.js';
+export * from './validation.js';

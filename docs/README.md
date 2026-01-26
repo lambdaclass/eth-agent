@@ -26,3 +26,4 @@ See the `examples/` directory:
 ## Background
 
 - **[Blog Post](./blog-post.md)** — Design rationale and architecture decisions
+- **[Library Comparison](./COMPARISON.md)** — eth-agent vs ethers.js, viem, wagmi, web3.js

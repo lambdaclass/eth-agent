@@ -13,7 +13,7 @@ import {
   isValidPrivateKey,
 } from '../core/signature.js';
 import { bytesToHex } from '../core/hex.js';
-import { sha512 } from '@noble/hashes/sha512';
+import { sha512 } from '@noble/hashes/sha2';
 
 export interface Account {
   readonly address: Address;

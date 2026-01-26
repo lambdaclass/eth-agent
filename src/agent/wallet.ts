@@ -14,6 +14,7 @@ import { GasOracle } from '../protocol/gas.js';
 import { TransactionBuilder } from '../protocol/transaction.js';
 import { Contract, ERC20_ABI } from '../protocol/contract.js';
 import { encodeFunctionCall } from '../core/abi.js';
+import { NonceManager } from '../protocol/nonce.js';
 import { LimitsEngine, type SpendingLimits } from './limits.js';
 import { SimulationEngine } from './simulation.js';
 import { ApprovalEngine, type ApprovalConfig, type ApprovalHandler } from './approval.js';
@@ -44,6 +45,8 @@ import {
   parseTokenAmount,
   formatTokenAmount,
   isNativeETH,
+  getTokenBySymbol,
+  getTokenAddress,
 } from '../tokens/index.js';
 import {
   UniswapClient,
@@ -63,6 +66,12 @@ import {
   type BridgeInitResult,
   type BridgeStatusResult,
   type BridgePreviewResult,
+  BridgeRouter,
+  type BridgeRouteComparison,
+  type BridgePreview,
+  type UnifiedBridgeResult,
+  type UnifiedBridgeStatus,
+  type RoutePreference,
 } from '../bridge/index.js';
 
 export interface AgentWalletConfig {
@@ -256,6 +265,35 @@ export interface BridgeUSDCResult extends BridgeInitResult {
   };
 }
 
+/**
+ * Options for the unified bridge method
+ */
+export interface BridgeOptions {
+  /** The stablecoin to bridge */
+  token: StablecoinInfo;
+  /** Amount in human-readable format (e.g., "100" means 100 USDC) */
+  amount: string | number;
+  /** Destination chain ID */
+  destinationChainId: number;
+  /** Recipient address on destination chain (defaults to sender) */
+  recipient?: string;
+  /** Route selection preferences */
+  preference?: RoutePreference;
+  /** Specific protocol to use (bypasses auto-selection) */
+  protocol?: string;
+}
+
+/**
+ * Extended bridge result with wallet-specific info
+ */
+export interface BridgeResult extends UnifiedBridgeResult {
+  limits: {
+    remaining: {
+      daily: string;
+    };
+  };
+}
+
 
 /**
  * AgentWallet - Safe Ethereum operations for AI agents
@@ -266,6 +304,7 @@ export class AgentWallet {
   private readonly rpc: RPCClient;
   private readonly ens: ENS;
   private readonly gasOracle: GasOracle;
+  private readonly nonceManager: NonceManager;
   private readonly limits: LimitsEngine;
   private readonly simulation: SimulationEngine;
   private readonly approval: ApprovalEngine;
@@ -275,7 +314,12 @@ export class AgentWallet {
   private readonly agentId: string;
   private uniswapClient: UniswapClient | null = null;
   private cachedBridge?: CCTPBridge;
+  private cachedBridgeRouter?: BridgeRouter;
   private cachedChainId?: number;
+
+  // ETH price cache for USD value estimation
+  private cachedETHPrice: { value: bigint; timestamp: number } | null = null;
+  private readonly ETH_PRICE_CACHE_TTL = 5 * 60 * 1000; // 5 minutes
 
   private constructor(config: Required<{
     account: Account;
@@ -292,6 +336,7 @@ export class AgentWallet {
     this.rpc = config.rpc;
     this.ens = new ENS(config.rpc);
     this.gasOracle = new GasOracle(config.rpc);
+    this.nonceManager = new NonceManager({ rpc: config.rpc, address: config.account.address });
     this.limits = new LimitsEngine(config.limits);
     this.simulation = new SimulationEngine(config.rpc);
     this.approval = new ApprovalEngine(config.approvalConfig);
@@ -453,7 +498,7 @@ export class AgentWallet {
     }
 
     // 9. Build and sign transaction
-    const nonce = await this.rpc.getTransactionCount(this.address);
+    const nonce = await this.nonceManager.getNextNonce();
     const chainId = await this.rpc.getChainId();
 
     let builder = TransactionBuilder.create()
@@ -478,10 +523,25 @@ export class AgentWallet {
     const signed = builder.sign(this.account);
 
     // 10. Send transaction
-    const hash = await this.rpc.sendRawTransaction(signed.raw);
+    let hash: Hash;
+    try {
+      hash = await this.rpc.sendRawTransaction(signed.raw);
+    } catch (error) {
+      // Reset nonce on send failure
+      await this.nonceManager.onTransactionFailed();
+      throw error;
+    }
 
     // 11. Wait for receipt
-    const receipt = await this.rpc.waitForTransaction(hash);
+    let receipt;
+    try {
+      receipt = await this.rpc.waitForTransaction(hash);
+      this.nonceManager.onTransactionConfirmed();
+    } catch (error) {
+      // Reset nonce if we can't confirm
+      await this.nonceManager.onTransactionFailed();
+      throw error;
+    }
 
     // 12. Record spend
     const gasUsed = receipt.gasUsed * receipt.effectiveGasPrice;
@@ -1133,6 +1193,268 @@ export class AgentWallet {
     return this.limits.getBridgeHistory(options);
   }
 
+  // ============ Unified Bridge Methods (Router-based) ============
+
+  /**
+   * Get or create a cached BridgeRouter instance
+   */
+  private async getBridgeRouter(): Promise<BridgeRouter> {
+    if (!this.cachedBridgeRouter) {
+      this.cachedBridgeRouter = new BridgeRouter({
+        sourceRpc: this.rpc,
+        account: this.account,
+        limitsEngine: this.limits,
+      });
+    }
+    return this.cachedBridgeRouter;
+  }
+
+  /**
+   * Bridge tokens using auto-selected best route
+   *
+   * This is the primary bridge method that automatically selects the best
+   * bridge protocol based on your preferences (cost, speed, or reliability).
+   *
+   * @example
+   * ```typescript
+   * // Simple one-liner - auto-selects best bridge
+   * const result = await wallet.bridge({
+   *   token: USDC,
+   *   amount: '100',
+   *   destinationChainId: 42161,  // Arbitrum
+   * });
+   *
+   * // Prefer speed over cost
+   * const fast = await wallet.bridge({
+   *   token: USDC,
+   *   amount: '100',
+   *   destinationChainId: 42161,
+   *   preference: { priority: 'speed' },
+   * });
+   *
+   * // Use specific protocol
+   * const via = await wallet.bridge({
+   *   token: USDC,
+   *   amount: '500',
+   *   destinationChainId: 10,
+   *   protocol: 'CCTP',
+   * });
+   * ```
+   */
+  async bridge(options: BridgeOptions): Promise<BridgeResult> {
+    const router = await this.getBridgeRouter();
+
+    // Resolve recipient if provided
+    let recipient: Address | undefined;
+    if (options.recipient) {
+      recipient = await this.resolveAddress(options.recipient);
+
+      // Check if blocked
+      const blocked = this.blockedAddresses.get(recipient.toLowerCase());
+      if (blocked) {
+        throw new BlockedAddressError(recipient, blocked);
+      }
+    }
+
+    // Build bridge request
+    const request = {
+      token: options.token,
+      amount: options.amount,
+      destinationChainId: options.destinationChainId,
+      recipient,
+    };
+
+    // Execute bridge via router
+    let result: UnifiedBridgeResult;
+    if (options.protocol) {
+      // Use specific protocol if specified
+      result = await router.bridgeVia(options.protocol, request);
+    } else {
+      // Auto-select best route based on preference
+      result = await router.bridge(request, options.preference ?? { priority: 'cost' });
+    }
+
+    // Get updated limit status
+    const bridgeStatus = this.limits.getBridgeStatus();
+
+    return {
+      ...result,
+      limits: {
+        remaining: {
+          daily: bridgeStatus.daily.remaining,
+        },
+      },
+    };
+  }
+
+  /**
+   * Safe version of bridge that returns a Result instead of throwing
+   *
+   * @example
+   * ```typescript
+   * const result = await wallet.safeBridge({
+   *   token: USDC,
+   *   amount: '100',
+   *   destinationChainId: 42161,
+   * });
+   *
+   * if (!result.success) {
+   *   console.log('Bridge failed:', result.error.message);
+   *   console.log('Recovery steps:', result.error.recovery?.nextSteps);
+   * }
+   * ```
+   */
+  async safeBridge(
+    options: BridgeOptions
+  ): Promise<Result<BridgeResult, EthAgentError>> {
+    try {
+      const result = await this.bridge(options);
+      return ok(result);
+    } catch (error) {
+      if (error instanceof EthAgentError) {
+        return err(error);
+      }
+      return err(new EthAgentError({
+        code: 'UNKNOWN_ERROR',
+        message: (error as Error).message,
+        suggestion: 'Failed to execute bridge',
+      }));
+    }
+  }
+
+  /**
+   * Compare available bridge routes before committing
+   *
+   * Returns quotes from all available protocols with a recommended choice.
+   * Use this to preview options and show users the trade-offs.
+   *
+   * @example
+   * ```typescript
+   * const routes = await wallet.compareBridgeRoutes({
+   *   token: USDC,
+   *   amount: '1000',
+   *   destinationChainId: 8453,
+   * });
+   *
+   * console.log(routes.recommendation.reason); // "CCTP: lowest fees ($0)"
+   *
+   * for (const quote of routes.quotes) {
+   *   console.log(`${quote.protocol}: $${quote.fee.totalUSD} fee, ${quote.estimatedTime.display}`);
+   * }
+   * ```
+   */
+  async compareBridgeRoutes(options: {
+    token: StablecoinInfo;
+    amount: string | number;
+    destinationChainId: number;
+    preference?: RoutePreference;
+  }): Promise<BridgeRouteComparison> {
+    const router = await this.getBridgeRouter();
+
+    return router.findRoutes(
+      {
+        token: options.token,
+        amount: options.amount,
+        destinationChainId: options.destinationChainId,
+      },
+      options.preference ?? { priority: 'cost' }
+    );
+  }
+
+  /**
+   * Preview a bridge operation with full validation
+   *
+   * Checks balance, limits, route availability, and returns gas estimates.
+   * Use this before executing to ensure the bridge will succeed.
+   *
+   * @example
+   * ```typescript
+   * const preview = await wallet.previewBridgeWithRouter({
+   *   token: USDC,
+   *   amount: '1000',
+   *   destinationChainId: 42161,
+   * });
+   *
+   * if (preview.canBridge) {
+   *   console.log(`Ready to bridge. Gas cost: $${preview.quote?.fee.totalUSD}`);
+   * } else {
+   *   console.log('Cannot bridge:', preview.blockers.join(', '));
+   * }
+   * ```
+   */
+  async previewBridgeWithRouter(options: {
+    token: StablecoinInfo;
+    amount: string | number;
+    destinationChainId: number;
+    preference?: RoutePreference;
+  }): Promise<BridgePreview> {
+    const router = await this.getBridgeRouter();
+
+    return router.previewBridge(
+      {
+        token: options.token,
+        amount: options.amount,
+        destinationChainId: options.destinationChainId,
+      },
+      options.preference ?? { priority: 'cost' }
+    );
+  }
+
+  /**
+   * Get bridge status using tracking ID
+   *
+   * The tracking ID is returned from bridge() and encodes all the information
+   * needed to check status without knowing which protocol was used.
+   *
+   * @example
+   * ```typescript
+   * const result = await wallet.bridge({ ... });
+   * // ... later ...
+   * const status = await wallet.getBridgeStatusByTrackingId(result.trackingId);
+   * console.log(`Progress: ${status.progress}%`);
+   * console.log(`Status: ${status.message}`);
+   * ```
+   */
+  async getBridgeStatusByTrackingId(trackingId: string): Promise<UnifiedBridgeStatus> {
+    const router = await this.getBridgeRouter();
+    return router.getStatusByTrackingId(trackingId);
+  }
+
+  /**
+   * Wait for bridge completion using tracking ID
+   *
+   * @example
+   * ```typescript
+   * const result = await wallet.bridge({ ... });
+   * const attestation = await wallet.waitForBridgeByTrackingId(result.trackingId);
+   * console.log('Bridge completed! Attestation:', attestation);
+   * ```
+   */
+  async waitForBridgeByTrackingId(
+    trackingId: string,
+    options?: { timeout?: number; onProgress?: (status: { progress: number; message: string }) => void }
+  ): Promise<Hex> {
+    const router = await this.getBridgeRouter();
+    return router.waitForCompletionByTrackingId(trackingId, options);
+  }
+
+  /**
+   * Get minimum bridge amount for a token
+   */
+  getMinBridgeAmount(token: StablecoinInfo): {
+    raw: bigint;
+    formatted: string;
+    usd: number;
+  } {
+    // Use a temporary router to get the min amount
+    // In practice, we might want to cache this
+    const router = new BridgeRouter({
+      sourceRpc: this.rpc,
+      account: this.account,
+    });
+    return router.getMinBridgeAmount(token);
+  }
+
   /**
    * Preview a transaction without executing
    */
@@ -1197,8 +1519,19 @@ export class AgentWallet {
         previewGasParams.data = options.data;
       }
       gasEstimate = await this.gasOracle.estimateGas(previewGasParams);
-    } catch {
-      // Use defaults
+    } catch (err) {
+      const isContractCall = options.data !== undefined && options.data !== '0x';
+      if (isContractCall) {
+        // Contract calls need much more gas - 21000 will always fail
+        blockers.push(
+          `Gas estimation failed for contract call: ${(err as Error).message}. Cannot preview accurately.`
+        );
+      } else {
+        // Simple ETH transfer - 21000 is correct, but warn that estimation failed
+        blockers.push(
+          `Gas estimation failed (using default 21000): ${(err as Error).message}`
+        );
+      }
     }
 
     // Simulate
@@ -1591,10 +1924,8 @@ export class AgentWallet {
       });
     }
 
-    // 7. Estimate USD value for swap limits
-    // For simplicity, we use a rough estimate - in production you'd use a price oracle
-    // We'll use 6 decimals for USD (like USDC)
-    const usdValue = this.estimateSwapUSDValue(amountIn, fromResolved.token, chainId);
+    // 7. Estimate USD value for swap limits (uses Uniswap quote for ETH price)
+    const usdValue = await this.estimateSwapUSDValue(amountIn, fromResolved.token, chainId);
 
     // 8. Check swap spending limits with proper USD value
     this.limits.checkSwapTransaction(
@@ -1852,10 +2183,70 @@ export class AgentWallet {
   }
 
   /**
-   * Estimate USD value of a swap (simplified - uses token decimals as proxy)
-   * In production, you would integrate a price oracle
+   * Get current ETH price in USD using Uniswap quote (cached for 5 minutes)
+   *
+   * @throws {EthAgentError} If ETH price cannot be fetched (no USDC/WETH on chain, or quote fails)
    */
-  private estimateSwapUSDValue(amount: bigint, token: TokenInfo, _chainId: number): bigint {
+  private async getETHPriceInUSD(chainId: number): Promise<bigint> {
+    // Return cached price if fresh
+    if (
+      this.cachedETHPrice &&
+      Date.now() - this.cachedETHPrice.timestamp < this.ETH_PRICE_CACHE_TTL
+    ) {
+      return this.cachedETHPrice.value;
+    }
+
+    // Get USDC address for this chain
+    const usdcToken = getTokenBySymbol('USDC');
+    const usdcAddress = usdcToken ? getTokenAddress(usdcToken, chainId) : undefined;
+    const wethAddress = WETH_ADDRESSES[chainId];
+
+    // Fail explicitly if USDC or WETH not available on this chain
+    if (!usdcAddress || !wethAddress) {
+      throw new EthAgentError({
+        code: 'ETH_PRICE_UNAVAILABLE',
+        message: `Cannot fetch ETH price on chain ${chainId}: USDC or WETH not available`,
+        details: { chainId, hasUSDC: !!usdcAddress, hasWETH: !!wethAddress },
+        suggestion: 'Use a chain with USDC liquidity (Mainnet, Arbitrum, Optimism, Base, Polygon) or swap stablecoins directly',
+      });
+    }
+
+    // Fetch current price using existing Uniswap infrastructure
+    const uniswap = await this.getUniswapClient();
+
+    try {
+      const quote = await uniswap.getQuote({
+        tokenIn: wethAddress as Address,
+        tokenOut: usdcAddress as Address,
+        amountIn: 10n ** 18n, // 1 ETH
+        slippageTolerance: 1,
+      });
+
+      // Cache the result (amountOut is in USDC which has 6 decimals)
+      this.cachedETHPrice = { value: quote.amountOut, timestamp: Date.now() };
+      return quote.amountOut;
+    } catch (error) {
+      // Fail explicitly if quote fails - don't use arbitrary fallback
+      throw new EthAgentError({
+        code: 'ETH_PRICE_QUOTE_FAILED',
+        message: `Failed to fetch ETH price from Uniswap on chain ${chainId}`,
+        details: { chainId, error: (error as Error).message },
+        suggestion: 'The ETH/USDC pool may have insufficient liquidity. Try again later or use a different chain',
+        retryable: true,
+        retryAfter: 30000, // 30 seconds
+      });
+    }
+  }
+
+  /**
+   * Estimate USD value of a swap amount
+   * Uses Uniswap quotes for ETH/WETH pricing, cached for efficiency
+   */
+  private async estimateSwapUSDValue(
+    amount: bigint,
+    token: TokenInfo,
+    chainId: number
+  ): Promise<bigint> {
     // For stablecoins, the value is approximately 1:1 with USD
     const stablecoins = ['USDC', 'USDT', 'USDS', 'DAI', 'PYUSD', 'FRAX'];
     if (stablecoins.includes(token.symbol.toUpperCase())) {
@@ -1869,15 +2260,14 @@ export class AgentWallet {
       }
     }
 
-    // For ETH/WETH, use a rough estimate (this should use a price oracle in production)
+    // For ETH/WETH, get real-time price from Uniswap
     if (token.symbol === 'ETH' || token.symbol === 'WETH') {
-      // Assume ~$2000 per ETH (normalized to 6 decimals)
-      // amount is in 18 decimals, so amount / 10^18 * 2000 * 10^6
-      return (amount * 2000n * 10n ** 6n) / 10n ** 18n;
+      const ethPriceUSD = await this.getETHPriceInUSD(chainId);
+      // ethPriceUSD is in 6 decimals, amount is in 18 decimals
+      return (amount * ethPriceUSD) / 10n ** 18n;
     }
 
     // For other tokens, use a conservative estimate based on amount
-    // This is a fallback - in production, integrate a price oracle
     // Normalize to 6 decimals and assume $1 = 1 token unit
     if (token.decimals === 6) {
       return amount;
