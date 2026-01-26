@@ -441,6 +441,9 @@ export class CCTPBridge implements BridgeProtocol {
    * Get current status of a bridge
    */
   async getStatus(messageHash: Hex): Promise<BridgeStatusResult> {
+    // Ensure attestation client is configured for the correct network
+    await this.initialize();
+
     try {
       const response = await this.attestation.getAttestation(messageHash);
 
@@ -471,6 +474,8 @@ export class CCTPBridge implements BridgeProtocol {
    * Wait for attestation to be ready
    */
   async waitForAttestation(messageHash: Hex): Promise<Hex> {
+    // Ensure attestation client is configured for the correct network
+    await this.initialize();
     return this.attestation.waitForAttestation(messageHash);
   }
 
@@ -478,6 +483,8 @@ export class CCTPBridge implements BridgeProtocol {
    * Check if attestation is ready (non-blocking)
    */
   async isAttestationReady(messageHash: Hex): Promise<boolean> {
+    // Ensure attestation client is configured for the correct network
+    await this.initialize();
     return this.attestation.isReady(messageHash);
   }
 }
