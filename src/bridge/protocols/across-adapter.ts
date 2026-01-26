@@ -13,8 +13,8 @@ import {
   type BridgeStatusResult,
 } from '../types.js';
 import { BridgeUnsupportedRouteError } from '../errors.js';
-import { AcrossBridge, type AcrossBridgeConfig, type AcrossQuote } from '../across/across-bridge.js';
-import { getSupportedAcrossChains, getAcrossConfig, getAcrossChainName, isAcrossTestnet } from '../across/constants.js';
+import { AcrossBridge, type AcrossQuote } from '../across/across-bridge.js';
+import { getSupportedAcrossChains, getAcrossConfig, getAcrossChainName } from '../across/constants.js';
 import { BaseBridgeAdapter, type BaseAdapterConfig } from './base-adapter.js';
 
 /**
