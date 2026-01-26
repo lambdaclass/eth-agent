@@ -488,10 +488,12 @@ export class AcrossBridge {
         throw new Error(`Across not supported on chain ${String(chainId)}`);
       }
 
+      // Issue #4: Share NonceManager with SpokePoolContract to prevent race conditions
       this.spokePool = new SpokePoolContract({
         rpc: this.sourceRpc,
         account: this.account,
         spokePoolAddress: config.spokePool,
+        nonceManager: this.nonceManager,
       });
     }
 
@@ -624,12 +626,18 @@ export class AcrossBridge {
     }
 
     // Wait for approval tx
+    let receipt;
     try {
-      await this.sourceRpc.waitForTransaction(txHash);
+      receipt = await this.sourceRpc.waitForTransaction(txHash);
       this.nonceManager.onTransactionConfirmed();
     } catch (error) {
       await this.nonceManager.onTransactionFailed();
       throw error;
+    }
+
+    // Issue #2: Check transaction status - reverted approvals should fail
+    if (receipt.status !== 'success') {
+      throw new Error(`Approval transaction reverted: ${txHash}`);
     }
   }
 

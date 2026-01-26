@@ -153,12 +153,19 @@ export class SpokePoolContract {
   private readonly gasOracle: GasOracle;
   private readonly nonceManager: NonceManager;
 
-  constructor(config: { rpc: RPCClient; account: Account; spokePoolAddress: Address }) {
+  constructor(config: {
+    rpc: RPCClient;
+    account: Account;
+    spokePoolAddress: Address;
+    /** Optional shared NonceManager to prevent race conditions with other components */
+    nonceManager?: NonceManager;
+  }) {
     this.rpc = config.rpc;
     this.account = config.account;
     this.spokePoolAddress = config.spokePoolAddress;
     this.gasOracle = new GasOracle(config.rpc);
-    this.nonceManager = new NonceManager({ rpc: config.rpc, address: config.account.address });
+    // Use provided NonceManager or create a new one (Issue #4: Allow shared NonceManager)
+    this.nonceManager = config.nonceManager ?? new NonceManager({ rpc: config.rpc, address: config.account.address });
   }
 
   /**
@@ -211,11 +218,14 @@ export class SpokePoolContract {
     }
     // quoteTimestamp should be recent (within last 5 minutes) but not in the future
     const maxQuoteAge = 300; // 5 minutes
-    if (quoteTimestamp > currentTime + 60) {
-      throw new Error(`quoteTimestamp ${quoteTimestamp} is too far in the future`);
+    const maxClockSkew = 5; // 5 seconds tolerance for clock skew (Issue #5: reduced from 60s)
+    if (quoteTimestamp > currentTime + maxClockSkew) {
+      throw new Error(`quoteTimestamp ${quoteTimestamp} is in the future (current: ${currentTime})`);
     }
-    if (currentTime - quoteTimestamp > maxQuoteAge) {
-      throw new Error(`quoteTimestamp ${quoteTimestamp} is stale (older than ${maxQuoteAge}s)`);
+    // Issue #3: Use absolute difference to handle potential clock skew edge cases
+    const quoteAge = Math.abs(currentTime - quoteTimestamp);
+    if (quoteAge > maxQuoteAge) {
+      throw new Error(`quoteTimestamp ${quoteTimestamp} is stale (age: ${quoteAge}s, max: ${maxQuoteAge}s)`);
     }
 
     // Encode the function call
@@ -310,6 +320,11 @@ export class SpokePoolContract {
     } catch (error) {
       await this.nonceManager.onTransactionFailed();
       throw error;
+    }
+
+    // Issue #1: Check transaction status - reverted transactions should fail
+    if (receipt.status !== 'success') {
+      throw new Error(`Deposit transaction reverted: ${txHash}`);
     }
 
     // Parse the deposit event to get depositId
@@ -444,6 +459,7 @@ export function createSpokePoolContract(config: {
   rpc: RPCClient;
   account: Account;
   spokePoolAddress: Address;
+  nonceManager?: NonceManager;
 }): SpokePoolContract {
   return new SpokePoolContract(config);
 }

@@ -159,8 +159,8 @@ wallet.getBridgeStatusByTrackingId(trackingId: string): Promise<UnifiedBridgeSta
 // Wait for bridge completion
 wallet.waitForBridgeByTrackingId(trackingId: string): Promise<Hex>
 
-// Get minimum bridge amount for a token
-wallet.getMinBridgeAmount(token: StablecoinInfo): { raw: bigint; formatted: string; usd: number }
+// Get minimum bridge amount for a token (async - requires fetching ETH price)
+wallet.getMinBridgeAmount(token: StablecoinInfo): Promise<{ raw: bigint; formatted: string; usd: number }>
 
 // Legacy direct CCTP methods
 wallet.bridgeUSDC(options: { amount: string; destinationChainId: number; recipient?: string }): Promise<BridgeUSDCResult>

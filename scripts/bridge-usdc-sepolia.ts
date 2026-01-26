@@ -67,7 +67,7 @@ async function main(): Promise<void> {
   console.log(`Wallet address: ${address}`);
 
   // Check minimum bridge amount
-  const minAmount = wallet.getMinBridgeAmount(USDC);
+  const minAmount = await wallet.getMinBridgeAmount(USDC);
   console.log(`Minimum bridge amount: $${minAmount.usd.toFixed(2)} (${minAmount.formatted} USDC)`);
 
   // Check USDC balance on Sepolia
