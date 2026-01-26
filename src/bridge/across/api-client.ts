@@ -26,14 +26,14 @@ export interface AcrossQuoteRequest {
 }
 
 /**
- * Quote response from Across API
+ * Quote response from Across API (normalized)
  */
 export interface AcrossQuoteResponse {
   /** Expected output amount after fees */
   totalRelayFee: {
     /** Fee in token's smallest unit */
     total: string;
-    /** Fee as percentage (decimal) */
+    /** Fee as percentage in 1e18 precision */
     pct: string;
   };
   /** Relayer capital fee */
@@ -61,7 +61,41 @@ export interface AcrossQuoteResponse {
   spokePoolAddress: string;
   /** Expected fill time in seconds */
   expectedFillTimeSec: number;
+  /** Fill deadline (use in deposit) */
+  fillDeadline: number;
+  /** Exclusive relayer address */
+  exclusiveRelayer: string;
+  /** Exclusivity deadline */
+  exclusivityDeadline: number;
+  /** Output amount (from API, if provided) */
+  outputAmount?: string;
   /** Limits for this route */
+  limits: {
+    minDeposit: string;
+    maxDeposit: string;
+    maxDepositInstant: string;
+    maxDepositShortDelay: string;
+  };
+}
+
+/**
+ * Raw API response (before normalization)
+ */
+interface RawAcrossQuoteResponse {
+  totalRelayFee: { total: string; pct: string };
+  relayerCapitalFee: { total: string; pct: string };
+  relayerGasFee: { total: string; pct: string };
+  lpFee: { total: string; pct: string };
+  timestamp: string | number;
+  isAmountTooLow: boolean;
+  quoteBlock: string | number;
+  spokePoolAddress: string;
+  estimatedFillTimeSec?: number;
+  expectedFillTimeSec?: number;
+  fillDeadline?: string | number;
+  exclusiveRelayer?: string;
+  exclusivityDeadline?: number;
+  outputAmount?: string;
   limits: {
     minDeposit: string;
     maxDeposit: string;
@@ -195,7 +229,31 @@ export class AcrossApiClient {
       throw new Error(`Across API error: ${response.status} - ${errorText}`);
     }
 
-    return response.json() as Promise<AcrossQuoteResponse>;
+    const raw = (await response.json()) as RawAcrossQuoteResponse;
+
+    // Normalize the response (API returns some fields as strings)
+    const timestamp = typeof raw.timestamp === 'string' ? parseInt(raw.timestamp, 10) : raw.timestamp;
+    const fillDeadline = raw.fillDeadline
+      ? (typeof raw.fillDeadline === 'string' ? parseInt(raw.fillDeadline, 10) : raw.fillDeadline)
+      : timestamp + 18000; // Default: 5 hours from quote
+
+    return {
+      totalRelayFee: raw.totalRelayFee,
+      relayerCapitalFee: raw.relayerCapitalFee,
+      relayerGasFee: raw.relayerGasFee,
+      lpFee: raw.lpFee,
+      timestamp,
+      isAmountTooLow: raw.isAmountTooLow,
+      quoteBlock: typeof raw.quoteBlock === 'string' ? parseInt(raw.quoteBlock, 10) : raw.quoteBlock,
+      spokePoolAddress: raw.spokePoolAddress,
+      // API uses 'estimatedFillTimeSec', normalize to 'expectedFillTimeSec'
+      expectedFillTimeSec: raw.estimatedFillTimeSec ?? raw.expectedFillTimeSec ?? 120,
+      fillDeadline,
+      exclusiveRelayer: raw.exclusiveRelayer ?? '0x0000000000000000000000000000000000000000',
+      exclusivityDeadline: raw.exclusivityDeadline ?? 0,
+      outputAmount: raw.outputAmount,
+      limits: raw.limits,
+    };
   }
 
   /**

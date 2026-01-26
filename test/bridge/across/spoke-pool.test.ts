@@ -151,7 +151,7 @@ describe('SpokePool', () => {
     describe('depositV3', () => {
       it('should execute deposit with EIP-1559 gas', async () => {
         // Mock receipt with deposit event
-        const depositEventTopic = '0xa123dc29aebf7d0c3322c8eeb5b999e859f39937950ed31056532713d0de396f';
+        const depositEventTopic = '0x32ed1a409ef04c7b0227189c3a103dc5ac10e775a15b785dcc510201f7c25ad3';
         mockRpc.waitForTransaction.mockResolvedValueOnce({
           transactionHash: '0xabcd1234' as Hex,
           blockNumber: 12345678,
@@ -302,7 +302,7 @@ describe('SpokePool', () => {
           spokePoolAddress: SPOKE_POOL_ADDRESS,
         });
 
-        const depositEventTopic = '0xa123dc29aebf7d0c3322c8eeb5b999e859f39937950ed31056532713d0de396f';
+        const depositEventTopic = '0x32ed1a409ef04c7b0227189c3a103dc5ac10e775a15b785dcc510201f7c25ad3';
 
         const result = contract.parseDepositEvent([
           {
@@ -321,7 +321,7 @@ describe('SpokePool', () => {
           spokePoolAddress: SPOKE_POOL_ADDRESS,
         });
 
-        const depositEventTopic = '0xa123dc29aebf7d0c3322c8eeb5b999e859f39937950ed31056532713d0de396f';
+        const depositEventTopic = '0x32ed1a409ef04c7b0227189c3a103dc5ac10e775a15b785dcc510201f7c25ad3';
 
         const result = contract.parseDepositEvent([
           {

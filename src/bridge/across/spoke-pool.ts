@@ -202,8 +202,9 @@ export class SpokePoolContract {
     } = params;
 
     // Encode the function call
-    // depositV3 selector: 0xe7a7ed02
-    const selector = '0xe7a7ed02' as Hex;
+    // depositV3(address,address,address,address,uint256,uint256,uint256,address,uint32,uint32,uint32,bytes)
+    // selector: 0x7b939232
+    const selector = '0x7b939232' as Hex;
 
     // Encode parameters
     const encodedParams = encodeParameters(
@@ -294,9 +295,9 @@ export class SpokePoolContract {
   parseDepositEvent(
     logs: Array<{ topics: Hex[]; data: Hex; address: Address }>
   ): V3FundsDepositedEvent | null {
-    // V3FundsDeposited event topic
+    // V3FundsDeposited event topic (keccak256 of event signature)
     const eventTopic =
-      '0xa123dc29aebf7d0c3322c8eeb5b999e859f39937950ed31056532713d0de396f';
+      '0x32ed1a409ef04c7b0227189c3a103dc5ac10e775a15b785dcc510201f7c25ad3';
 
     for (const log of logs) {
       if (
@@ -325,23 +326,40 @@ export class SpokePoolContract {
     // Non-indexed parameters from data
     const data = log.data.slice(2); // Remove 0x prefix
 
+    // Helper to safely parse hex to BigInt (returns 0n for empty/invalid)
+    const safeBigInt = (hex: string): bigint => {
+      if (!hex || hex.length === 0) return 0n;
+      return BigInt('0x' + hex);
+    };
+
+    // Helper to safely parse hex to number
+    const safeNumber = (hex: string): number => Number(safeBigInt(hex));
+
     // Each 32-byte segment (64 hex chars)
     const inputToken = ('0x' + data.slice(24, 64)) as Address;
     const outputToken = ('0x' + data.slice(88, 128)) as Address;
-    const inputAmount = BigInt('0x' + data.slice(128, 192));
-    const outputAmount = BigInt('0x' + data.slice(192, 256));
+    const inputAmount = safeBigInt(data.slice(128, 192));
+    const outputAmount = safeBigInt(data.slice(192, 256));
     // Skip destinationChainId at 256-320 (already from topics)
     // Skip depositId at 320-384 (already from topics)
-    const quoteTimestamp = Number(BigInt('0x' + data.slice(384, 448)));
-    const fillDeadline = Number(BigInt('0x' + data.slice(448, 512)));
-    const exclusivityDeadline = Number(BigInt('0x' + data.slice(512, 576)));
+    const quoteTimestamp = safeNumber(data.slice(384, 448));
+    const fillDeadline = safeNumber(data.slice(448, 512));
+    const exclusivityDeadline = safeNumber(data.slice(512, 576));
     // Skip depositor at 576-640 (already from topics)
     const recipient = ('0x' + data.slice(664, 704)) as Address;
     const exclusiveRelayer = ('0x' + data.slice(728, 768)) as Address;
     // message is dynamic, starts at offset specified at 768-832
-    const messageOffset = Number(BigInt('0x' + data.slice(768, 832))) * 2;
-    const messageLength = Number(BigInt('0x' + data.slice(messageOffset, messageOffset + 64))) * 2;
-    const message = ('0x' + data.slice(messageOffset + 64, messageOffset + 64 + messageLength)) as Hex;
+    const messageOffsetHex = data.slice(768, 832);
+    let message: Hex = '0x' as Hex;
+    if (messageOffsetHex && messageOffsetHex.length > 0) {
+      const messageOffset = safeNumber(messageOffsetHex) * 2;
+      if (messageOffset > 0 && messageOffset + 64 <= data.length) {
+        const messageLength = safeNumber(data.slice(messageOffset, messageOffset + 64)) * 2;
+        if (messageLength > 0 && messageOffset + 64 + messageLength <= data.length) {
+          message = ('0x' + data.slice(messageOffset + 64, messageOffset + 64 + messageLength)) as Hex;
+        }
+      }
+    }
 
     return {
       inputToken,
@@ -356,7 +374,7 @@ export class SpokePoolContract {
       depositor,
       recipient,
       exclusiveRelayer,
-      message: message || ('0x' as Hex),
+      message,
     };
   }
 }

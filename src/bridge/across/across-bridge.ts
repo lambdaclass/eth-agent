@@ -38,8 +38,6 @@ export interface AcrossBridgeConfig {
   testnet?: boolean;
   /** Default slippage tolerance in basis points (default: 100 = 1%) */
   defaultSlippageBps?: number;
-  /** Fill deadline offset in seconds (default: 18000 = 5 hours) */
-  fillDeadlineOffset?: number;
 }
 
 /**
@@ -56,8 +54,12 @@ export interface AcrossQuote {
   feeBps: number;
   /** Quote timestamp (use in deposit) */
   quoteTimestamp: number;
-  /** Fill deadline */
+  /** Fill deadline (from API) */
   fillDeadline: number;
+  /** Exclusive relayer address */
+  exclusiveRelayer: string;
+  /** Exclusivity deadline */
+  exclusivityDeadline: number;
   /** Expected fill time in seconds */
   expectedFillTimeSec: number;
   /** Route limits */
@@ -100,7 +102,6 @@ export class AcrossBridge {
   private readonly sourceRpc: RPCClient;
   private readonly account: Account;
   private readonly testnet?: boolean;
-  private readonly fillDeadlineOffset: number;
   private readonly gasOracle: GasOracle;
 
   private cachedChainId?: number;
@@ -111,7 +112,6 @@ export class AcrossBridge {
     this.sourceRpc = config.sourceRpc;
     this.account = config.account;
     this.testnet = config.testnet; // Will be auto-detected in getApiClient if undefined
-    this.fillDeadlineOffset = config.fillDeadlineOffset ?? 18000; // 5 hours default
     this.gasOracle = new GasOracle(config.sourceRpc);
   }
 
@@ -188,12 +188,17 @@ export class AcrossBridge {
 
     // Calculate amounts
     const totalFee = BigInt(quoteResponse.totalRelayFee.total);
-    const outputAmount = amount - totalFee;
-    const feeBps = Math.round(Number(quoteResponse.totalRelayFee.pct) * 10000);
-
-    // Calculate fill deadline
-    const currentTime = Math.floor(Date.now() / 1000);
-    const fillDeadline = currentTime + this.fillDeadlineOffset;
+    // Use API-provided outputAmount when available (more accurate)
+    const outputAmount = quoteResponse.outputAmount
+      ? BigInt(quoteResponse.outputAmount)
+      : amount - totalFee;
+    // pct can be in two formats:
+    // - 1e18 precision (API): "12312744091431953" = 1.23%
+    // - Decimal string (tests): "0.005" = 0.5%
+    const pctValue = Number(quoteResponse.totalRelayFee.pct);
+    const feeBps = pctValue > 1
+      ? Math.round(pctValue / 1e14) // 1e18 precision → basis points
+      : Math.round(pctValue * 10000); // Decimal → basis points
 
     return {
       inputAmount: amount,
@@ -201,7 +206,9 @@ export class AcrossBridge {
       totalFee,
       feeBps,
       quoteTimestamp: quoteResponse.timestamp,
-      fillDeadline,
+      fillDeadline: quoteResponse.fillDeadline,
+      exclusiveRelayer: quoteResponse.exclusiveRelayer,
+      exclusivityDeadline: quoteResponse.exclusivityDeadline,
       expectedFillTimeSec: quoteResponse.expectedFillTimeSec,
       limits: {
         minDeposit: BigInt(quoteResponse.limits.minDeposit),
@@ -340,6 +347,8 @@ export class AcrossBridge {
       destinationChainId: request.destinationChainId,
       quoteTimestamp: quote.quoteTimestamp,
       fillDeadline: quote.fillDeadline,
+      exclusiveRelayer: quote.exclusiveRelayer as Address,
+      exclusivityDeadline: quote.exclusivityDeadline,
     });
 
     const formattedAmount = formatStablecoinAmount(quote.inputAmount, request.token);
