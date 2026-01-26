@@ -58,6 +58,7 @@ describe('BridgeRouter', () => {
       const router = new BridgeRouter({
         sourceRpc: mockRpc as any,
         account: mockAccount as any,
+        ethPriceUSD: 2500,
       });
 
       expect(router).toBeDefined();
@@ -67,6 +68,7 @@ describe('BridgeRouter', () => {
       const router = new BridgeRouter({
         sourceRpc: mockRpc as any,
         account: mockAccount as any,
+        ethPriceUSD: 2500,
       });
 
       expect(router.getRegisteredProtocols()).toContain('CCTP');
@@ -78,6 +80,7 @@ describe('BridgeRouter', () => {
       const router = new BridgeRouter({
         sourceRpc: mockRpc as any,
         account: mockAccount as any,
+        ethPriceUSD: 2500,
       });
 
       const protocols = router.getAvailableProtocols('USDC');
@@ -88,9 +91,11 @@ describe('BridgeRouter', () => {
       const router = new BridgeRouter({
         sourceRpc: mockRpc as any,
         account: mockAccount as any,
+        ethPriceUSD: 2500,
       });
 
-      const protocols = router.getAvailableProtocols('DAI');
+      // Use a token that isn't supported by any protocol
+      const protocols = router.getAvailableProtocols('SUSHI');
       expect(protocols).toHaveLength(0);
     });
   });
@@ -100,6 +105,7 @@ describe('BridgeRouter', () => {
       const router = new BridgeRouter({
         sourceRpc: mockRpc as any,
         account: mockAccount as any,
+        ethPriceUSD: 2500,
       });
 
       const routes = await router.getSupportedRoutes('USDC');
@@ -115,6 +121,7 @@ describe('BridgeRouter', () => {
       const router = new BridgeRouter({
         sourceRpc: mockRpc as any,
         account: mockAccount as any,
+        ethPriceUSD: 2500,
       });
 
       const result = await router.isRouteSupported(42161, 'USDC');
@@ -127,6 +134,7 @@ describe('BridgeRouter', () => {
       const router = new BridgeRouter({
         sourceRpc: mockRpc as any,
         account: mockAccount as any,
+        ethPriceUSD: 2500,
       });
 
       const result = await router.isRouteSupported(999999, 'USDC');
@@ -139,9 +147,11 @@ describe('BridgeRouter', () => {
       const router = new BridgeRouter({
         sourceRpc: mockRpc as any,
         account: mockAccount as any,
+        ethPriceUSD: 2500,
       });
 
-      const result = await router.isRouteSupported(42161, 'DAI');
+      // Use a token that isn't supported by any protocol
+      const result = await router.isRouteSupported(42161, 'SUSHI');
 
       expect(result.supported).toBe(false);
     });
@@ -152,6 +162,7 @@ describe('BridgeRouter', () => {
       const router = new BridgeRouter({
         sourceRpc: mockRpc as any,
         account: mockAccount as any,
+        ethPriceUSD: 2500,
       });
 
       const quote = await router.getQuote('CCTP', {
@@ -170,6 +181,7 @@ describe('BridgeRouter', () => {
       const router = new BridgeRouter({
         sourceRpc: mockRpc as any,
         account: mockAccount as any,
+        ethPriceUSD: 2500,
       });
 
       await expect(
@@ -187,6 +199,7 @@ describe('BridgeRouter', () => {
       const router = new BridgeRouter({
         sourceRpc: mockRpc as any,
         account: mockAccount as any,
+        ethPriceUSD: 2500,
       });
 
       const comparison = await router.findRoutes({
@@ -197,13 +210,15 @@ describe('BridgeRouter', () => {
 
       expect(comparison.quotes.length).toBeGreaterThan(0);
       expect(comparison.recommended).toBeDefined();
-      expect(comparison.recommended?.protocol).toBe('CCTP');
+      // Either CCTP or Across can be recommended depending on fees
+      expect(['CCTP', 'Across']).toContain(comparison.recommended?.protocol);
     });
 
     it('should throw for unsupported route', async () => {
       const router = new BridgeRouter({
         sourceRpc: mockRpc as any,
         account: mockAccount as any,
+        ethPriceUSD: 2500,
       });
 
       await expect(
@@ -219,6 +234,7 @@ describe('BridgeRouter', () => {
       const router = new BridgeRouter({
         sourceRpc: mockRpc as any,
         account: mockAccount as any,
+        ethPriceUSD: 2500,
       });
 
       const comparison = await router.findRoutes(
@@ -243,6 +259,7 @@ describe('BridgeRouter', () => {
       const router = new BridgeRouter({
         sourceRpc: mockRpc as any,
         account: mockAccount as any,
+        ethPriceUSD: 2500,
       });
 
       // Mock balance check
@@ -266,6 +283,7 @@ describe('BridgeRouter', () => {
       const router = new BridgeRouter({
         sourceRpc: mockRpc as any,
         account: mockAccount as any,
+        ethPriceUSD: 2500,
       });
 
       const preview = await router.previewBridge({
@@ -284,6 +302,7 @@ describe('BridgeRouter', () => {
       const router = new BridgeRouter({
         sourceRpc: mockRpc as any,
         account: mockAccount as any,
+        ethPriceUSD: 2500,
       });
 
       const comparison = await router.findRoutes({
@@ -294,7 +313,8 @@ describe('BridgeRouter', () => {
 
       const explanation = router.explain(comparison);
 
-      expect(explanation).toContain('CCTP');
+      // Explanation should contain the recommended protocol and fee info
+      expect(explanation).toContain('Recommended:');
       expect(explanation).toContain('Fee');
     });
   });
@@ -304,6 +324,7 @@ describe('BridgeRouter', () => {
       const router = new BridgeRouter({
         sourceRpc: mockRpc as any,
         account: mockAccount as any,
+        ethPriceUSD: 2500,
       });
 
       const comparison = await router.findRoutes({
@@ -314,7 +335,8 @@ describe('BridgeRouter', () => {
 
       const summary = router.summarize(comparison);
 
-      expect(summary).toContain('Recommended: CCTP');
+      // Summary should contain the recommended protocol (either CCTP or Across)
+      expect(summary).toMatch(/Recommended: (CCTP|Across)/);
     });
   });
 
@@ -323,6 +345,7 @@ describe('BridgeRouter', () => {
       const router = createBridgeRouter({
         sourceRpc: mockRpc as any,
         account: mockAccount as any,
+        ethPriceUSD: 2500,
       });
 
       expect(router).toBeInstanceOf(BridgeRouter);
@@ -334,6 +357,7 @@ describe('BridgeRouter', () => {
       const router = new BridgeRouter({
         sourceRpc: mockRpc as any,
         account: mockAccount as any,
+        ethPriceUSD: 2500,
       });
 
       expect(router.getRegisteredProtocols()).toContain('CCTP');
@@ -348,6 +372,7 @@ describe('BridgeRouter', () => {
       const router = new BridgeRouter({
         sourceRpc: mockRpc as any,
         account: mockAccount as any,
+        ethPriceUSD: 2500,
       });
 
       const removed = router.unregisterProtocol('NonExistent');
@@ -359,6 +384,7 @@ describe('BridgeRouter', () => {
       const router = new BridgeRouter({
         sourceRpc: mockRpc as any,
         account: mockAccount as any,
+        ethPriceUSD: 2500,
       });
 
       const protocol = router.getProtocol('CCTP');
@@ -371,6 +397,7 @@ describe('BridgeRouter', () => {
       const router = new BridgeRouter({
         sourceRpc: mockRpc as any,
         account: mockAccount as any,
+        ethPriceUSD: 2500,
       });
 
       const protocol = router.getProtocol('NonExistent');

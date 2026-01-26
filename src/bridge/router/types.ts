@@ -27,10 +27,10 @@ export interface BridgeRouterConfig {
   debug?: boolean;
   /**
    * ETH price in USD for gas fee estimation.
-   * In production, consider fetching from a price oracle.
-   * @default 2000
+   * Required for accurate fee calculations.
+   * Consider fetching from a price oracle for production use.
    */
-  ethPriceUSD?: number;
+  ethPriceUSD: number;
 }
 
 /**

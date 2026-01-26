@@ -322,10 +322,21 @@ export {
 
 // Bridge module
 export {
-  // Main bridge
+  // CCTP Bridge
   CCTPBridge,
   createCCTPBridge,
   type CCTPBridgeConfig,
+
+  // Across Bridge
+  AcrossBridge,
+  createAcrossBridge,
+  AcrossApiClient,
+  createAcrossApiClient,
+  type AcrossBridgeConfig,
+  type AcrossQuote,
+  type AcrossBridgePreview,
+  type AcrossQuoteRequest,
+  type AcrossQuoteResponse,
 
   // Types
   type BridgeRequest,
@@ -336,7 +347,7 @@ export {
   type BridgeProtocol,
   type CCTPDomain,
 
-  // Constants
+  // CCTP Constants
   CCTP_CONTRACTS,
   CIRCLE_ATTESTATION_API,
   getCCTPConfig,
@@ -344,6 +355,15 @@ export {
   isTestnet as isBridgeTestnet,
   getChainName as getBridgeChainName,
   type CCTPChainConfig,
+
+  // Across Constants
+  ACROSS_CONTRACTS,
+  ACROSS_API,
+  getAcrossConfig,
+  getSupportedAcrossChains,
+  isAcrossTestnet,
+  getAcrossChainName,
+  type AcrossChainConfig,
 
   // Attestation
   AttestationClient,

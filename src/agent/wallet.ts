@@ -1133,10 +1133,17 @@ export class AgentWallet {
    */
   private async getBridgeRouter(): Promise<BridgeRouter> {
     if (!this.cachedBridgeRouter) {
+      // Fetch current ETH price for accurate fee calculations
+      const chainId = await this.rpc.getChainId();
+      const ethPriceRaw = await this.getETHPriceInUSD(chainId);
+      // Convert from 6 decimals (USDC) to regular number
+      const ethPriceUSD = Number(ethPriceRaw) / 1e6;
+
       this.cachedBridgeRouter = new BridgeRouter({
         sourceRpc: this.rpc,
         account: this.account,
         limitsEngine: this.limits,
+        ethPriceUSD,
       });
     }
     return this.cachedBridgeRouter;
@@ -1374,17 +1381,12 @@ export class AgentWallet {
   /**
    * Get minimum bridge amount for a token
    */
-  getMinBridgeAmount(token: StablecoinInfo): {
+  async getMinBridgeAmount(token: StablecoinInfo): Promise<{
     raw: bigint;
     formatted: string;
     usd: number;
-  } {
-    // Use a temporary router to get the min amount
-    // In practice, we might want to cache this
-    const router = new BridgeRouter({
-      sourceRpc: this.rpc,
-      account: this.account,
-    });
+  }> {
+    const router = await this.getBridgeRouter();
     return router.getMinBridgeAmount(token);
   }
 

@@ -24,6 +24,8 @@ export interface CCTPAdapterConfig extends BaseAdapterConfig {
   testnet?: boolean;
   /** Custom attestation client config */
   attestationConfig?: CCTPBridgeConfig['attestationConfig'];
+  /** ETH price in USD for gas estimation (required for accurate fee calculations) */
+  ethPriceUSD: number;
 }
 
 /**
@@ -41,9 +43,12 @@ export class CCTPAdapter extends BaseBridgeAdapter {
   };
 
   private readonly cctpBridge: CCTPBridge;
+  private readonly ethPriceUSD: number;
 
   constructor(config: CCTPAdapterConfig) {
     super(config);
+
+    this.ethPriceUSD = config.ethPriceUSD;
 
     // Create the underlying CCTP bridge
     this.cctpBridge = new CCTPBridge({
@@ -115,6 +120,11 @@ export class CCTPAdapter extends BaseBridgeAdapter {
         total: gasFee,
         totalUSD: this.estimateGasInUSD(gasFee),
       },
+      // CCTP is 1:1 with no slippage - explicit for clarity
+      slippage: {
+        expectedBps: 0,
+        maxBps: 0,
+      },
       estimatedTime: {
         minSeconds: typeof this.info.estimatedTimeSeconds === 'object' ? this.info.estimatedTimeSeconds.min : 600,
         maxSeconds: typeof this.info.estimatedTimeSeconds === 'object' ? this.info.estimatedTimeSeconds.max : 1800,
@@ -124,6 +134,9 @@ export class CCTPAdapter extends BaseBridgeAdapter {
         ),
       },
       route: {
+        sourceChainId,
+        destinationChainId: request.destinationChainId,
+        token: 'USDC',
         steps: 1,
         description: this.createRouteDescription(sourceChainName, destChainName, 'USDC'),
       },
@@ -135,12 +148,16 @@ export class CCTPAdapter extends BaseBridgeAdapter {
   /**
    * Estimate fees for a request
    */
-  async estimateFees(_request: BridgeRequest): Promise<{ protocolFee: bigint; gasFee: bigint }> {
+  async estimateFees(_request: BridgeRequest): Promise<{ protocolFee: bigint; gasFee: bigint; totalUSD: number }> {
     // CCTP has no protocol fees
     const protocolFee = 0n;
     const gasFee = await this.estimateGasFee();
 
-    return { protocolFee, gasFee };
+    return {
+      protocolFee,
+      gasFee,
+      totalUSD: this.estimateGasInUSD(gasFee),
+    };
   }
 
   /**
@@ -214,15 +231,11 @@ export class CCTPAdapter extends BaseBridgeAdapter {
   }
 
   /**
-   * Estimate gas cost in USD (rough estimate)
+   * Estimate gas cost in USD
    */
   private estimateGasInUSD(gasFee: bigint): number {
-    // Rough ETH price estimate for gas cost calculation
-    // In production, you'd want to fetch this from a price oracle
-    const ethPriceUSD = 2000; // Conservative estimate
-    const ethDecimals = 18;
-    const gasInEth = Number(gasFee) / Math.pow(10, ethDecimals);
-    return Math.round(gasInEth * ethPriceUSD * 100) / 100;
+    const gasInEth = Number(gasFee) / 1e18;
+    return Math.round(gasInEth * this.ethPriceUSD * 100) / 100;
   }
 }
 
