@@ -1452,8 +1452,19 @@ export class AgentWallet {
         previewGasParams.data = options.data;
       }
       gasEstimate = await this.gasOracle.estimateGas(previewGasParams);
-    } catch {
-      // Use defaults
+    } catch (err) {
+      const isContractCall = options.data !== undefined && options.data !== '0x';
+      if (isContractCall) {
+        // Contract calls need much more gas - 21000 will always fail
+        blockers.push(
+          `Gas estimation failed for contract call: ${(err as Error).message}. Cannot preview accurately.`
+        );
+      } else {
+        // Simple ETH transfer - 21000 is correct, but warn that estimation failed
+        blockers.push(
+          `Gas estimation failed (using default 21000): ${(err as Error).message}`
+        );
+      }
     }
 
     // Simulate
