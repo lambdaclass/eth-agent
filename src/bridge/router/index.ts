@@ -718,7 +718,7 @@ export class BridgeRouter {
         nonce = header.nonce;
       } catch (err) {
         if (this.debug) {
-          console.log(`[BridgeRouter] Failed to decode message: ${err}`);
+          console.log(`[BridgeRouter] Failed to decode message: ${String(err)}`);
         }
         return false;
       }
@@ -748,7 +748,7 @@ export class BridgeRouter {
       return nonceUsed;
     } catch (err) {
       if (this.debug) {
-        console.log(`[BridgeRouter] Failed to check nonce: ${err}`);
+        console.log(`[BridgeRouter] Failed to check nonce: ${String(err)}`);
       }
       return false;
     }
