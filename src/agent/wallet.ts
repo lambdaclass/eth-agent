@@ -1375,6 +1375,34 @@ export class AgentWallet {
   }
 
   /**
+   * Register an RPC client for a destination chain
+   *
+   * This enables on-chain completion checking for bridges to that chain.
+   * When registered, getBridgeStatusByTrackingId() can verify if a bridge
+   * has actually completed on the destination chain, not just that the
+   * attestation is ready.
+   *
+   * @param chainId - The destination chain ID
+   * @param rpcUrl - The RPC URL for that chain
+   *
+   * @example
+   * ```typescript
+   * // Enable completion checking for Base
+   * wallet.registerDestinationRpc(8453, 'https://mainnet.base.org');
+   *
+   * // Now status checks can verify on-chain completion
+   * const status = await wallet.getBridgeStatusByTrackingId(trackingId);
+   * // status.status will be 'completed' if nonce is used on Base
+   * ```
+   */
+  async registerDestinationRpc(chainId: number, rpcUrl: string): Promise<void> {
+    const { RPCClient } = await import('../protocol/rpc.js');
+    const destRpc = new RPCClient({ url: rpcUrl });
+    const router = await this.getBridgeRouter();
+    router.registerDestinationRpc(chainId, destRpc);
+  }
+
+  /**
    * Get minimum bridge amount for a token
    */
   getMinBridgeAmount(token: StablecoinInfo): {

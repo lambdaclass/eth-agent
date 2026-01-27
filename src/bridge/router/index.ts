@@ -23,8 +23,10 @@ import {
   BridgeQuoteExpiredError,
   BridgeValidationError,
 } from '../errors.js';
-import { getChainName } from '../constants.js';
+import { getChainName, getCCTPConfig } from '../constants.js';
 import { CCTPAdapter } from '../protocols/cctp-adapter.js';
+import { decodeMessageHeader } from '../cctp/message-transmitter.js';
+import type { RPCClient } from '../../protocol/rpc.js';
 import { RouteSelector } from './selector.js';
 import { ExplainBridge } from './explain.js';
 import {
@@ -36,6 +38,7 @@ import {
 import {
   TrackingRegistry,
   type ProtocolTrackingInfo,
+  type BridgeMetadata,
 } from './tracking.js';
 import {
   BridgeValidator,
@@ -58,6 +61,9 @@ export class BridgeRouter {
   private readonly trackingRegistry: TrackingRegistry;
   private readonly validator: BridgeValidator;
 
+  /** Registry of RPC clients for destination chains (keyed by chain ID) */
+  private readonly destinationRpcs: Map<number, RPCClient> = new Map();
+
   private cachedChainId?: number;
 
   constructor(config: BridgeRouterConfig) {
@@ -74,6 +80,24 @@ export class BridgeRouter {
 
     // Register default protocol (CCTP)
     this.registerDefaultProtocols();
+  }
+
+  /**
+   * Register an RPC client for a destination chain
+   * This enables on-chain completion checking for bridges to that chain
+   */
+  registerDestinationRpc(chainId: number, rpc: RPCClient): void {
+    this.destinationRpcs.set(chainId, rpc);
+    if (this.debug) {
+      console.log(`[BridgeRouter] Registered destination RPC for chain ${chainId}`);
+    }
+  }
+
+  /**
+   * Get registered destination RPC for a chain
+   */
+  getDestinationRpc(chainId: number): RPCClient | undefined {
+    return this.destinationRpcs.get(chainId);
   }
 
   // ============ Protocol Management ============
@@ -480,12 +504,33 @@ export class BridgeRouter {
       );
     }
 
-    // Generate unified tracking ID using the registry
+    // Generate unified tracking ID using the registry (now includes destination chain)
     const trackingInfo: ProtocolTrackingInfo = this.extractTrackingInfo(protocolName, result);
     const trackingId = this.trackingRegistry.createTrackingId({
       info: trackingInfo,
       sourceChainId,
+      destinationChainId: request.destinationChainId,
     });
+
+    // Store metadata for on-chain completion checking
+    const bridgeMetadata: Omit<BridgeMetadata, 'createdAt'> = {
+      messageBytes: result.messageBytes,
+      nonce: result.nonce,
+      destinationChainId: request.destinationChainId,
+    };
+
+    // Decode message to get source/destination domains (CCTP-specific)
+    if (result.messageBytes) {
+      try {
+        const header = decodeMessageHeader(result.messageBytes);
+        bridgeMetadata.sourceDomain = header.sourceDomain;
+        bridgeMetadata.destinationDomain = header.destinationDomain;
+      } catch {
+        // Ignore decode errors for non-CCTP protocols
+      }
+    }
+
+    this.trackingRegistry.storeMetadata(trackingId, bridgeMetadata);
 
     const formattedAmount = formatStablecoinAmount(amount, request.token);
     const sourceChainName = getChainName(sourceChainId);
@@ -572,12 +617,12 @@ export class BridgeRouter {
   /**
    * Get status of a bridge operation using unified tracking ID
    *
-   * @param trackingId - Unified tracking ID (e.g., "bridge_cctp_1_0xabc...")
+   * @param trackingId - Unified tracking ID (e.g., "bridge_cctp_1_8453_0xabc...")
    * @returns Bridge status
    *
    * @example
    * ```typescript
-   * const status = await router.getStatus('bridge_cctp_1_0xabc123...');
+   * const status = await router.getStatus('bridge_cctp_1_8453_0xabc123...');
    * console.log(status.progress); // 50
    * console.log(status.message);  // "Attestation in progress"
    * ```
@@ -592,7 +637,7 @@ export class BridgeRouter {
       });
     }
 
-    const { protocol, identifier } = parsed;
+    const { protocol, identifier, destinationChainId } = parsed;
 
     // Find the protocol (case-insensitive)
     const entry = this.findProtocolEntry(protocol);
@@ -604,9 +649,109 @@ export class BridgeRouter {
       });
     }
 
+    // Get attestation status from protocol
     const status = await entry.protocol.getStatus(identifier as Hex);
 
+    // If attestation is ready, check if bridge is actually complete on-chain
+    if (status.status === 'attestation_ready') {
+      const isComplete = await this.checkOnChainCompletion(trackingId, destinationChainId);
+      if (isComplete) {
+        // Override status to completed
+        return this.buildUnifiedStatus(trackingId, entry.protocol.name, {
+          ...status,
+          status: 'completed',
+        });
+      }
+    }
+
     return this.buildUnifiedStatus(trackingId, entry.protocol.name, status);
+  }
+
+  /**
+   * Check if a bridge has been completed on the destination chain
+   * Returns true if the nonce has been used (message received)
+   */
+  private async checkOnChainCompletion(
+    trackingId: string,
+    destinationChainId?: number
+  ): Promise<boolean> {
+    // Get stored metadata for this bridge
+    const metadata = this.trackingRegistry.getMetadata(trackingId);
+
+    // Determine destination chain ID from parsed tracking ID or metadata
+    const destChainId = destinationChainId ?? metadata?.destinationChainId;
+
+    if (!destChainId) {
+      if (this.debug) {
+        console.log(`[BridgeRouter] No destination chain ID for ${trackingId}, cannot check completion`);
+      }
+      return false;
+    }
+
+    // Check if we have an RPC for the destination chain
+    const destRpc = this.destinationRpcs.get(destChainId);
+    if (!destRpc) {
+      if (this.debug) {
+        console.log(`[BridgeRouter] No destination RPC for chain ${destChainId}, cannot check completion`);
+      }
+      return false;
+    }
+
+    // Get CCTP config for destination chain
+    const destConfig = getCCTPConfig(destChainId);
+    if (!destConfig) {
+      if (this.debug) {
+        console.log(`[BridgeRouter] No CCTP config for chain ${destChainId}`);
+      }
+      return false;
+    }
+
+    // Try to get nonce info from metadata or decode from message
+    let sourceDomain = metadata?.sourceDomain;
+    let nonce = metadata?.nonce;
+
+    // If we have message bytes but no nonce/domain, decode them
+    if (metadata?.messageBytes && (sourceDomain === undefined || nonce === undefined)) {
+      try {
+        const header = decodeMessageHeader(metadata.messageBytes);
+        sourceDomain = header.sourceDomain;
+        nonce = header.nonce;
+      } catch (err) {
+        if (this.debug) {
+          console.log(`[BridgeRouter] Failed to decode message: ${err}`);
+        }
+        return false;
+      }
+    }
+
+    if (sourceDomain === undefined || nonce === undefined) {
+      if (this.debug) {
+        console.log(`[BridgeRouter] Missing sourceDomain or nonce for completion check`);
+      }
+      return false;
+    }
+
+    // Check if nonce has been used on destination chain
+    try {
+      const { MessageTransmitterContract } = await import('../cctp/message-transmitter.js');
+      const messageTransmitter = new MessageTransmitterContract({
+        rpc: destRpc,
+        cctpConfig: destConfig,
+      });
+
+      const nonceUsed = await messageTransmitter.isNonceUsed(sourceDomain, nonce);
+
+      if (this.debug) {
+        console.log(`[BridgeRouter] Nonce ${nonce} used on chain ${destChainId}: ${nonceUsed}`);
+      }
+
+      return nonceUsed;
+    } catch (err) {
+      if (this.debug) {
+        console.log(`[BridgeRouter] Failed to check nonce: ${err}`);
+      }
+      return false;
+    }
   }
 
   /**

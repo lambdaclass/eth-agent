@@ -299,7 +299,9 @@ Be helpful, concise, and always prioritize safety. If an operation seems risky o
           toolResults.push({
             type: 'tool_result',
             tool_use_id: toolUse.id,
-            content: JSON.stringify(result),
+            content: JSON.stringify(result, (_, v) =>
+              typeof v === 'bigint' ? v.toString() : v
+            ),
           });
         }
 
