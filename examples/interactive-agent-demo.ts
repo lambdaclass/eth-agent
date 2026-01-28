@@ -58,6 +58,17 @@ const CONFIG = {
       perDayUSD: 500,
     },
   },
+
+  // Default destination chain RPCs for verifying bridged tokens
+  // These enable on-chain completion checking for bridge status
+  destinationRpcs: {
+    84532: process.env.BASE_SEPOLIA_RPC_URL ?? 'https://sepolia.base.org', // Base Sepolia
+    11155420: process.env.OP_SEPOLIA_RPC_URL ?? 'https://sepolia.optimism.io', // OP Sepolia
+    421614: process.env.ARB_SEPOLIA_RPC_URL ?? 'https://sepolia-rollup.arbitrum.io/rpc', // Arbitrum Sepolia
+    8453: process.env.BASE_RPC_URL ?? 'https://mainnet.base.org', // Base
+    10: process.env.OP_RPC_URL ?? 'https://mainnet.optimism.io', // Optimism
+    42161: process.env.ARB_RPC_URL ?? 'https://arb1.arbitrum.io/rpc', // Arbitrum
+  } as Record<number, string>,
 };
 
 // ============================================================================
@@ -149,7 +160,8 @@ function printExamples(): void {
   console.log(`  ${colors.dim}"Get a quote to swap 0.01 ETH for USDC"${colors.reset}`);
   console.log(`  ${colors.dim}"Swap 10 USDC for ETH"${colors.reset}`);
   console.log(`  ${colors.dim}"Compare bridge routes for 50 USDC to Arbitrum"${colors.reset}`);
-  console.log(`  ${colors.dim}"Bridge 25 USDC to Base"${colors.reset}`);
+  console.log(`  ${colors.dim}"Bridge 25 USDC to Base Sepolia"${colors.reset}`);
+  console.log(`  ${colors.dim}"Check my USDC balance on Base Sepolia"${colors.reset}`);
   console.log(`  ${colors.dim}"Preview sending 0.01 ETH to vitalik.eth"${colors.reset}`);
   console.log(`  ${colors.dim}"What are my current spending limits?"${colors.reset}`);
   console.log(`\n${colors.dim}Type 'quit' or 'exit' to end the session.${colors.reset}\n`);
@@ -229,12 +241,18 @@ async function runAgentLoop(
 3. **Swap tokens** - Exchange tokens using Uniswap V3 (e.g., ETH <-> USDC)
 4. **Bridge tokens** - Move stablecoins across chains (Ethereum, Arbitrum, Base, Optimism, etc.)
 5. **Preview operations** - Simulate transactions before executing to see costs and potential issues
+6. **Verify bridged tokens** - Check if tokens have arrived on the destination chain after bridging
 
 **Important Safety Notes:**
 - Always preview or quote operations before executing them when the user hasn't explicitly asked to execute
 - Spending limits are enforced - check limits if a transaction fails
 - For swaps and bridges, explain the fees and expected outcomes
 - When bridging, explain the estimated time and process
+
+**Bridge Verification:**
+After a bridge operation, you can verify tokens arrived by:
+1. Using eth_getBridgeStatus to check the bridge progress (should reach 100% when complete)
+2. Using eth_getStablecoinBalanceOnChain to check the actual balance on the destination chain
 
 **Current Network:** ${getChainName(wallet.getCapabilities().network.chainId)} (Chain ${wallet.getCapabilities().network.chainId})
 **Wallet Address:** ${wallet.address}
@@ -374,6 +392,12 @@ async function main(): Promise<void> {
     limits: CONFIG.limits,
     onApprovalRequired: createApprovalHandler(rl),
   });
+
+  // Register destination chain RPCs for bridge completion verification
+  // This enables checking if bridged tokens actually arrived on the destination chain
+  for (const [chainId, rpcUrl] of Object.entries(CONFIG.destinationRpcs)) {
+    await wallet.registerDestinationRpc(parseInt(chainId), rpcUrl);
+  }
 
   const tools = anthropicTools(wallet);
 

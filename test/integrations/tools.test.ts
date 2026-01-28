@@ -54,11 +54,12 @@ describe('Tools', () => {
       expect(toolNames).toContain('eth_compareBridgeRoutes');
       expect(toolNames).toContain('eth_getBridgeStatus');
       expect(toolNames).toContain('eth_getBridgeLimits');
+      expect(toolNames).toContain('eth_getStablecoinBalanceOnChain');
     });
 
     it('creates the correct number of tools', () => {
-      // 7 core + 3 swap + 3 stablecoin + 5 bridge = 18 tools
-      expect(tools.length).toBe(18);
+      // 7 core + 3 swap + 3 stablecoin + 6 bridge = 19 tools
+      expect(tools.length).toBe(19);
     });
 
     it('tools have correct metadata structure', () => {

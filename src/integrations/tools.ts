@@ -4,8 +4,9 @@
  */
 
 import type { AgentWallet } from '../agent/index.js';
-import type { Address } from '../core/types.js';
-import { STABLECOINS, type StablecoinInfo } from '../stablecoins/tokens.js';
+import type { Address, Hex } from '../core/types.js';
+import { STABLECOINS, type StablecoinInfo, getStablecoinAddress } from '../stablecoins/tokens.js';
+import { RPCClient } from '../protocol/rpc.js';
 
 /**
  * Resolve stablecoin by symbol
@@ -32,6 +33,26 @@ const SUPPORTED_CHAINS: Record<number, string> = {
   421614: 'Arbitrum Sepolia',
   80002: 'Polygon Amoy',
   43113: 'Avalanche Fuji',
+};
+
+/**
+ * Default public RPC URLs for supported chains
+ * Used for verifying bridged tokens on destination chains
+ */
+const DEFAULT_RPC_URLS: Record<number, string> = {
+  1: 'https://eth.llamarpc.com',
+  10: 'https://mainnet.optimism.io',
+  137: 'https://polygon-rpc.com',
+  8453: 'https://mainnet.base.org',
+  42161: 'https://arb1.arbitrum.io/rpc',
+  43114: 'https://api.avax.network/ext/bc/C/rpc',
+  // Testnets
+  11155111: 'https://ethereum-sepolia-rpc.publicnode.com',
+  11155420: 'https://sepolia.optimism.io',
+  84532: 'https://sepolia.base.org',
+  421614: 'https://sepolia-rollup.arbitrum.io/rpc',
+  80002: 'https://rpc-amoy.polygon.technology',
+  43113: 'https://api.avax-test.network/ext/bc/C/rpc',
 };
 
 export interface ToolDefinition {
@@ -959,6 +980,121 @@ Returns a tracking ID to monitor bridge progress.`,
       },
       metadata: {
         category: 'info',
+        requiresApproval: false,
+        riskLevel: 'none',
+      },
+    },
+
+    {
+      name: 'eth_getStablecoinBalanceOnChain',
+      description: `Check stablecoin balance on a different chain. Use this to verify bridged tokens arrived on the destination chain.
+
+Example usage:
+- Check USDC balance on Base Sepolia after bridging from Sepolia
+- Verify tokens arrived on Arbitrum after bridge completes
+
+This tool connects to the destination chain's RPC to check the actual on-chain balance.`,
+      parameters: {
+        type: 'object',
+        properties: {
+          token: {
+            type: 'string',
+            description: 'Stablecoin symbol: USDC, USDT, USDS, DAI, PYUSD, or FRAX',
+            enum: ['USDC', 'USDT', 'USDS', 'DAI', 'PYUSD', 'FRAX'],
+          },
+          chainId: {
+            type: 'number',
+            description: 'Chain ID to check balance on (e.g., 84532 for Base Sepolia, 8453 for Base)',
+          },
+          address: {
+            type: 'string',
+            description: 'Address to check. Leave empty for wallet address.',
+          },
+          rpcUrl: {
+            type: 'string',
+            description: 'Optional custom RPC URL. Uses default public RPC if not provided.',
+          },
+        },
+        required: ['token', 'chainId'],
+      },
+      handler: async (params) => {
+        try {
+          const stablecoin = resolveStablecoin(params['token'] as string);
+          if (!stablecoin) {
+            const tokenName = String(params['token']);
+            return {
+              success: false,
+              error: `Unknown stablecoin: ${tokenName}`,
+              summary: `Unknown stablecoin: ${tokenName}`,
+            };
+          }
+
+          const chainId = params['chainId'] as number;
+          const chainName = SUPPORTED_CHAINS[chainId] || `Chain ${chainId}`;
+
+          // Get the stablecoin address on the destination chain
+          const tokenAddress = getStablecoinAddress(stablecoin, chainId);
+          if (!tokenAddress) {
+            return {
+              success: false,
+              error: `${stablecoin.symbol} not supported on ${chainName}`,
+              summary: `${stablecoin.symbol} not available on ${chainName}`,
+            };
+          }
+
+          // Get RPC URL (custom or default)
+          const rpcUrl = (params['rpcUrl'] as string) || DEFAULT_RPC_URLS[chainId];
+          if (!rpcUrl) {
+            return {
+              success: false,
+              error: `No RPC URL available for ${chainName}. Please provide a custom rpcUrl.`,
+              summary: `No RPC for ${chainName}`,
+            };
+          }
+
+          // Create RPC client for destination chain
+          const rpc = new RPCClient(rpcUrl);
+
+          // Get address to check (default to wallet address)
+          const addressToCheck = (params['address'] as string) || wallet.address;
+
+          // Call balanceOf on the token contract
+          const balanceData = await rpc.call({
+            to: tokenAddress as Address,
+            data: `0x70a08231000000000000000000000000${addressToCheck.slice(2).toLowerCase()}` as Hex,
+          });
+
+          const rawBalance = BigInt(balanceData || '0x0');
+          const decimals = stablecoin.decimals;
+          const divisor = BigInt(10 ** decimals);
+          const whole = rawBalance / divisor;
+          const fraction = rawBalance % divisor;
+          const formatted = `${whole}.${fraction.toString().padStart(decimals, '0').slice(0, 2)}`;
+
+          return {
+            success: true,
+            data: {
+              symbol: stablecoin.symbol,
+              chain: chainName,
+              chainId,
+              address: addressToCheck,
+              tokenAddress,
+              raw: rawBalance.toString(),
+              formatted,
+              decimals,
+            },
+            summary: `${stablecoin.symbol} balance on ${chainName}: ${formatted} ${stablecoin.symbol}`,
+          };
+        } catch (err) {
+          return {
+            success: false,
+            error: (err as Error).message,
+            summary: `Failed to get balance: ${(err as Error).message}`,
+          };
+        }
+      },
+      metadata: {
+        category: 'read',
         requiresApproval: false,
         riskLevel: 'none',
       },
