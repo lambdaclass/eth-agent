@@ -23,6 +23,8 @@ export interface BridgeRouterConfig {
   account: Account;
   /** Optional limits engine for spending limits */
   limitsEngine?: LimitsEngine;
+  /** Enable fast CCTP mode (v2 API - seconds instead of minutes) */
+  fast?: boolean;
   /** Enable debug logging */
   debug?: boolean;
   /**

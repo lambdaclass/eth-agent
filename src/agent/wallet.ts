@@ -94,6 +94,12 @@ export interface AgentWalletConfig {
 
   // Agent identification
   agentId?: string;
+
+  // Bridge configuration
+  bridge?: {
+    /** Enable fast CCTP mode (v2 API - seconds instead of 15-30 minutes) */
+    fast?: boolean;
+  };
 }
 
 export interface SendOptions {
@@ -312,6 +318,7 @@ export class AgentWallet {
   private uniswapClient: UniswapClient | null = null;
   private cachedBridge?: CCTPBridge;
   private cachedBridgeRouter?: BridgeRouter;
+  private readonly bridgeConfig: { fast: boolean };
   private cachedChainId?: number;
 
   // ETH price cache for USD value estimation
@@ -327,6 +334,7 @@ export class AgentWallet {
     trustedAddresses: Map<string, string>;
     blockedAddresses: Map<string, string>;
     agentId: string;
+    bridgeConfig: { fast: boolean };
   }>) {
     this.account = config.account;
     this.address = config.account.address;
@@ -341,6 +349,7 @@ export class AgentWallet {
     this.trustedAddresses = config.trustedAddresses;
     this.blockedAddresses = config.blockedAddresses;
     this.agentId = config.agentId;
+    this.bridgeConfig = config.bridgeConfig;
   }
 
   /**
@@ -409,6 +418,9 @@ export class AgentWallet {
       trustedAddresses,
       blockedAddresses,
       agentId: config.agentId ?? 'agent',
+      bridgeConfig: {
+        fast: config.bridge?.fast ?? false,
+      },
     });
   }
 
@@ -966,10 +978,18 @@ export class AgentWallet {
       this.cachedBridge = new CCTPBridge({
         sourceRpc: this.rpc,
         account: this.account,
+        fast: this.bridgeConfig.fast,
         // Let it auto-detect testnet from chain ID
       });
     }
     return this.cachedBridge;
+  }
+
+  /**
+   * Check if fast CCTP bridge mode is enabled
+   */
+  isFastBridgeEnabled(): boolean {
+    return this.bridgeConfig.fast;
   }
 
   /**
@@ -1083,13 +1103,53 @@ export class AgentWallet {
 
   /**
    * Wait for bridge attestation to be ready
-   * This can take 15-30 minutes on mainnet
+   * This can take 15-30 minutes on mainnet (or seconds if fast mode is enabled)
    *
    * @returns The attestation signature needed to complete the bridge
    */
   async waitForBridgeAttestation(messageHash: Hex): Promise<Hex> {
     const bridge = await this.getBridge();
     return bridge.waitForAttestation(messageHash);
+  }
+
+  /**
+   * Wait for fast bridge attestation using the v2 API
+   * This typically takes 10-30 seconds instead of 15-30 minutes
+   *
+   * @param burnTxHash - Transaction hash from the bridge burn operation
+   * @returns Attestation data including the signature
+   */
+  async waitForFastBridgeAttestation(burnTxHash: Hash): Promise<{ attestation: Hex; message?: Hex; messageHash?: Hex }> {
+    const bridge = await this.getBridge();
+    return bridge.waitForFastAttestation(burnTxHash);
+  }
+
+  /**
+   * Check if fast bridge attestation is ready (non-blocking)
+   *
+   * @param burnTxHash - Transaction hash from the bridge burn operation
+   * @returns true if attestation is ready
+   */
+  async isFastBridgeAttestationReady(burnTxHash: Hash): Promise<boolean> {
+    const bridge = await this.getBridge();
+    return bridge.isFastAttestationReady(burnTxHash);
+  }
+
+  /**
+   * Get fast transfer fee quote for a destination chain
+   *
+   * @param destinationChainId - Target chain ID
+   * @param amount - Optional amount to calculate max fee
+   * @returns Fee information
+   */
+  async getFastBridgeFee(destinationChainId: number, amount?: bigint): Promise<{
+    feePercentage: number;
+    feeBasisPoints: number;
+    maxFee?: bigint;
+    maxFeeFormatted?: string;
+  }> {
+    const bridge = await this.getBridge();
+    return bridge.getFastTransferFee(destinationChainId, amount);
   }
 
   /**
@@ -1138,6 +1198,7 @@ export class AgentWallet {
         sourceRpc: this.rpc,
         account: this.account,
         limitsEngine: this.limits,
+        fast: this.bridgeConfig.fast,
       });
     }
     return this.cachedBridgeRouter;

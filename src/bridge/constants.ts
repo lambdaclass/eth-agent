@@ -118,11 +118,45 @@ export const CCTP_CONTRACTS: Record<number, CCTPChainConfig> = {
  * Circle's attestation API endpoints
  */
 export const CIRCLE_ATTESTATION_API = {
-  /** Mainnet attestation service */
+  /** Mainnet attestation service (v1 - standard, 15-30 min) */
   mainnet: 'https://iris-api.circle.com/v1/attestations',
-  /** Testnet attestation service */
+  /** Testnet attestation service (v1 - standard) */
   testnet: 'https://iris-api-sandbox.circle.com/v1/attestations',
 } as const;
+
+/**
+ * Circle's Fast CCTP API endpoints (v2 - seconds instead of minutes)
+ * Uses source domain + tx hash lookup instead of message hash
+ */
+export const CIRCLE_FAST_ATTESTATION_API = {
+  /** Mainnet fast attestation service */
+  mainnet: 'https://iris-api.circle.com/v2/messages',
+  /** Testnet fast attestation service */
+  testnet: 'https://iris-api-sandbox.circle.com/v2/messages',
+} as const;
+
+/**
+ * Circle's CCTP fee API endpoints (for fast transfer fee quotes)
+ */
+export const CIRCLE_FEE_API = {
+  /** Mainnet fee API */
+  mainnet: 'https://iris-api.circle.com/v2/burn/USDC/fees',
+  /** Testnet fee API */
+  testnet: 'https://iris-api-sandbox.circle.com/v2/burn/USDC/fees',
+} as const;
+
+/**
+ * CCTP v2 finality thresholds
+ * These determine when Circle will sign the attestation
+ */
+export const CCTP_FINALITY_THRESHOLDS = {
+  /** Confirmed finality - for fast transfers (soft finality, ~seconds) */
+  confirmed: 1000,
+  /** Finalized finality - for standard transfers (hard finality, ~15-30 min) */
+  finalized: 2000,
+} as const;
+
+export type CCTPFinalityThreshold = typeof CCTP_FINALITY_THRESHOLDS[keyof typeof CCTP_FINALITY_THRESHOLDS];
 
 /**
  * Get CCTP config for a chain

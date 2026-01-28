@@ -52,6 +52,7 @@ export class BridgeRouter {
   private readonly sourceRpc: BridgeRouterConfig['sourceRpc'];
   private readonly account: BridgeRouterConfig['account'];
   private readonly limitsEngine?: BridgeRouterConfig['limitsEngine'];
+  private readonly fast: boolean;
   private readonly debug: boolean;
   private readonly ethPriceUSD: number;
 
@@ -70,6 +71,7 @@ export class BridgeRouter {
     this.sourceRpc = config.sourceRpc;
     this.account = config.account;
     this.limitsEngine = config.limitsEngine;
+    this.fast = config.fast ?? false;
     this.debug = config.debug ?? false;
     this.ethPriceUSD = config.ethPriceUSD ?? 2000;
 
@@ -80,6 +82,13 @@ export class BridgeRouter {
 
     // Register default protocol (CCTP)
     this.registerDefaultProtocols();
+  }
+
+  /**
+   * Check if fast CCTP mode is enabled
+   */
+  isFastMode(): boolean {
+    return this.fast;
   }
 
   /**
@@ -1002,6 +1011,7 @@ export class BridgeRouter {
     const cctpAdapter = new CCTPAdapter({
       sourceRpc: this.sourceRpc,
       account: this.account,
+      fast: this.fast,
     });
 
     this.registerProtocol(cctpAdapter, { priority: 100 }); // High priority for CCTP

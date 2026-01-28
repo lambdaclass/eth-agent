@@ -4,7 +4,7 @@
  */
 
 import type { AgentWallet } from '../agent/index.js';
-import type { Address, Hex } from '../core/types.js';
+import type { Address, Hash, Hex } from '../core/types.js';
 import { STABLECOINS, type StablecoinInfo, getStablecoinAddress } from '../stablecoins/tokens.js';
 import { RPCClient } from '../protocol/rpc.js';
 
@@ -944,6 +944,110 @@ Returns a tracking ID to monitor bridge progress.`,
       },
       metadata: {
         category: 'read',
+        requiresApproval: false,
+        riskLevel: 'none',
+      },
+    },
+
+    {
+      name: 'eth_waitForFastBridgeAttestation',
+      description: `Wait for fast CCTP attestation using the burn transaction hash.
+This is much faster than standard attestation (10-30 seconds vs 15-30 minutes).
+
+Use this when fast bridge mode is enabled. Pass the burn transaction hash from the bridge result.
+
+Example: After bridging, use the burnTxHash to wait for the fast attestation.`,
+      parameters: {
+        type: 'object',
+        properties: {
+          burnTxHash: {
+            type: 'string',
+            description: 'The transaction hash of the bridge burn operation',
+          },
+        },
+        required: ['burnTxHash'],
+      },
+      handler: async (params) => {
+        try {
+          const burnTxHash = params['burnTxHash'] as Hash;
+          const result = await wallet.waitForFastBridgeAttestation(burnTxHash);
+
+          return {
+            success: true,
+            data: result,
+            summary: `Fast attestation ready! Attestation received for tx ${burnTxHash.slice(0, 10)}...`,
+          };
+        } catch (err) {
+          return {
+            success: false,
+            error: (err as Error).message,
+            summary: `Failed to get fast attestation: ${(err as Error).message}`,
+          };
+        }
+      },
+      metadata: {
+        category: 'read',
+        requiresApproval: false,
+        riskLevel: 'none',
+      },
+    },
+
+    {
+      name: 'eth_getFastBridgeFee',
+      description: `Get the fee for fast CCTP transfers to a destination chain.
+Fast transfers use optimistic finality and require a small fee (typically ~0.1% or less).
+
+Use this to preview the fee before initiating a fast bridge transfer.`,
+      parameters: {
+        type: 'object',
+        properties: {
+          destinationChainId: {
+            type: 'number',
+            description: 'The destination chain ID',
+          },
+          amount: {
+            type: 'string',
+            description: 'Optional: Amount in USDC to calculate the max fee (e.g., "100")',
+          },
+        },
+        required: ['destinationChainId'],
+      },
+      handler: async (params) => {
+        try {
+          const destChainId = params['destinationChainId'] as number;
+          const amountStr = params['amount'] as string | undefined;
+
+          // Convert amount to raw if provided (USDC has 6 decimals)
+          let amount: bigint | undefined;
+          if (amountStr) {
+            const [whole, fraction = ''] = amountStr.split('.');
+            const paddedFraction = fraction.padEnd(6, '0').slice(0, 6);
+            amount = BigInt(whole + paddedFraction);
+          }
+
+          const fee = await wallet.getFastBridgeFee(destChainId, amount);
+          const destChainName = SUPPORTED_CHAINS[destChainId] || `Chain ${destChainId}`;
+
+          let summary = `Fast bridge fee to ${destChainName}: ${fee.feePercentage * 100}%`;
+          if (fee.maxFeeFormatted) {
+            summary += ` (max fee: ${fee.maxFeeFormatted} USDC)`;
+          }
+
+          return {
+            success: true,
+            data: fee,
+            summary,
+          };
+        } catch (err) {
+          return {
+            success: false,
+            error: (err as Error).message,
+            summary: `Failed to get fast bridge fee: ${(err as Error).message}`,
+          };
+        }
+      },
+      metadata: {
+        category: 'info',
         requiresApproval: false,
         riskLevel: 'none',
       },

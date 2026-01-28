@@ -38,6 +38,12 @@ const CONFIG = {
   // Claude model to use
   model: 'claude-sonnet-4-20250514' as const,
 
+  // Bridge configuration
+  bridge: {
+    // Enable fast CCTP mode (v2 API - seconds instead of 15-30 minutes)
+    fast: process.env.FAST_BRIDGE === 'true' || true, // Default to fast mode
+  },
+
   // Safety limits for the demo (conservative for safety)
   limits: {
     perTransaction: '0.1 ETH',
@@ -117,9 +123,11 @@ ${colors.cyan}==================================================================
 function printWalletInfo(wallet: AgentWallet): void {
   const caps = wallet.getCapabilities();
   const chainName = getChainName(caps.network.chainId);
+  const fastBridge = wallet.isFastBridgeEnabled();
   console.log(`${colors.blue}Wallet Info${colors.reset}`);
   console.log(`  Address: ${colors.cyan}${caps.address}${colors.reset}`);
   console.log(`  Network: ${colors.yellow}${chainName} (Chain ${caps.network.chainId})${colors.reset}`);
+  console.log(`  Bridge:  ${fastBridge ? `${colors.green}Fast CCTP (v2)${colors.reset}` : `${colors.dim}Standard CCTP${colors.reset}`}`);
 }
 
 function printLimits(wallet: AgentWallet): void {
@@ -234,6 +242,7 @@ async function runAgentLoop(
 ): Promise<void> {
   const conversationHistory: Anthropic.MessageParam[] = [];
 
+  const fastMode = wallet.isFastBridgeEnabled();
   const systemPrompt = `You are an AI assistant with access to an Ethereum wallet. You can help users:
 
 1. **Check balances** - ETH, stablecoins (USDC, USDT, DAI), and other tokens
@@ -248,6 +257,10 @@ async function runAgentLoop(
 - Spending limits are enforced - check limits if a transaction fails
 - For swaps and bridges, explain the fees and expected outcomes
 - When bridging, explain the estimated time and process
+
+**Bridge Mode:** ${fastMode ? 'Fast CCTP (v2) - attestations in ~10-30 seconds' : 'Standard CCTP - attestations in ~15-30 minutes'}
+${fastMode ? '- Fast mode uses optimistic finality with a small fee (~0.1% or less)' : ''}
+${fastMode ? '- Use eth_waitForFastBridgeAttestation with the burn tx hash for fast attestation' : ''}
 
 **Bridge Verification:**
 After a bridge operation, you can verify tokens arrived by:
@@ -390,6 +403,7 @@ async function main(): Promise<void> {
     privateKey: process.env.ETH_PRIVATE_KEY,
     rpcUrl: CONFIG.rpcUrl,
     limits: CONFIG.limits,
+    bridge: CONFIG.bridge,
     onApprovalRequired: createApprovalHandler(rl),
   });
 

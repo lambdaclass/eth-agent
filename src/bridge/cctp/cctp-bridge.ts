@@ -3,7 +3,7 @@
  * Orchestrates USDC bridging via Circle's Cross-Chain Transfer Protocol
  */
 
-import type { Address, Hex } from '../../core/types.js';
+import type { Address, Hash, Hex } from '../../core/types.js';
 import type { RPCClient } from '../../protocol/rpc.js';
 import type { Account } from '../../protocol/account.js';
 import {
@@ -18,11 +18,13 @@ import {
   type BridgeCompleteResult,
   type BridgeStatusResult,
   type BridgeStatus,
+  type CCTPDomain,
 } from '../types.js';
 import {
   getCCTPConfig,
   getSupportedCCTPChains,
   type CCTPChainConfig,
+  CCTP_FINALITY_THRESHOLDS,
 } from '../constants.js';
 import {
   BridgeUnsupportedRouteError,
@@ -33,6 +35,7 @@ import {
 import { TokenMessengerContract } from './token-messenger.js';
 import { MessageTransmitterContract, decodeMessageHeader, decodeBurnMessageBody } from './message-transmitter.js';
 import { AttestationClient } from './attestation.js';
+import { CCTPFeeClient } from './fees.js';
 import { InsufficientFundsError } from '../../agent/errors.js';
 import { isTestnet as checkIsTestnet, getChainName } from '../constants.js';
 
@@ -46,6 +49,8 @@ export interface CCTPBridgeConfig {
   account: Account;
   /** Use testnet (auto-detected from chain ID if not specified) */
   testnet?: boolean;
+  /** Enable fast CCTP mode (v2 API - seconds instead of minutes) */
+  fast?: boolean;
   /** Custom attestation client config */
   attestationConfig?: {
     pollingInterval?: number;
@@ -100,8 +105,10 @@ export class CCTPBridge implements BridgeProtocol {
   private readonly sourceRpc: RPCClient;
   private readonly account: Account;
   private attestation: AttestationClient;
+  private feeClient: CCTPFeeClient;
   private readonly attestationConfig?: CCTPBridgeConfig['attestationConfig'];
   private readonly explicitTestnet?: boolean;
+  private readonly fast: boolean;
   private sourceChainId?: number;
   private sourceConfig?: CCTPChainConfig;
   private isTestnet?: boolean;
@@ -111,6 +118,7 @@ export class CCTPBridge implements BridgeProtocol {
     this.account = config.account;
     this.explicitTestnet = config.testnet;
     this.attestationConfig = config.attestationConfig;
+    this.fast = config.fast ?? false;
 
     // Create attestation client (may be recreated after auto-detection)
     this.attestation = new AttestationClient({
@@ -118,6 +126,18 @@ export class CCTPBridge implements BridgeProtocol {
       pollingInterval: config.attestationConfig?.pollingInterval,
       maxWaitTime: config.attestationConfig?.maxWaitTime,
     });
+
+    // Create fee client for fast transfers
+    this.feeClient = new CCTPFeeClient({
+      testnet: config.testnet,
+    });
+  }
+
+  /**
+   * Check if fast CCTP mode is enabled
+   */
+  isFastMode(): boolean {
+    return this.fast;
   }
 
   /**
@@ -150,6 +170,10 @@ export class CCTPBridge implements BridgeProtocol {
         testnet: this.isTestnet,
         pollingInterval: this.attestationConfig?.pollingInterval,
         maxWaitTime: this.attestationConfig?.maxWaitTime,
+      });
+      // Recreate fee client with correct endpoint
+      this.feeClient = new CCTPFeeClient({
+        testnet: this.isTestnet,
       });
     } else {
       this.isTestnet = this.explicitTestnet;
@@ -190,7 +214,7 @@ export class CCTPBridge implements BridgeProtocol {
    * Get estimated time for bridging
    */
   getEstimatedTime(): string {
-    return this.attestation.getEstimatedTime();
+    return this.attestation.getEstimatedTime(this.fast);
   }
 
   /**
@@ -336,13 +360,38 @@ export class CCTPBridge implements BridgeProtocol {
       }
     }
 
-    // Execute depositForBurn
-    const result = await tokenMessenger.depositForBurn({
-      amount,
-      destinationDomain: destConfig.domain,
-      mintRecipient: recipient,
-      burnToken: sourceConfig.usdc,
-    });
+    // Execute depositForBurn (v1 standard or v2 fast)
+    let result;
+    let maxFee = 0n;
+
+    if (this.fast) {
+      // Fast transfer: fetch fee and use v2 with confirmed finality
+      const feeResult = await this.feeClient.getFastTransferFee(
+        sourceConfig.domain as CCTPDomain,
+        destConfig.domain,
+        amount
+      );
+      maxFee = feeResult.maxFee;
+
+      result = await tokenMessenger.depositForBurnV2({
+        amount,
+        destinationDomain: destConfig.domain,
+        mintRecipient: recipient,
+        burnToken: sourceConfig.usdc,
+        // Set destination caller to recipient (required for fast transfers on some networks)
+        destinationCaller: recipient,
+        maxFee,
+        minFinalityThreshold: CCTP_FINALITY_THRESHOLDS.confirmed,
+      });
+    } else {
+      // Standard transfer: use v1 with finalized finality
+      result = await tokenMessenger.depositForBurn({
+        amount,
+        destinationDomain: destConfig.domain,
+        mintRecipient: recipient,
+        burnToken: sourceConfig.usdc,
+      });
+    }
 
     return {
       success: true,
@@ -486,6 +535,98 @@ export class CCTPBridge implements BridgeProtocol {
     // Ensure attestation client is configured for the correct network
     await this.initialize();
     return this.attestation.isReady(messageHash);
+  }
+
+  /**
+   * Wait for fast attestation using v2 API (source domain + tx hash)
+   * Much faster than standard attestation (seconds vs minutes)
+   *
+   * @param burnTxHash - Transaction hash of the burn transaction
+   * @param sourceDomain - Optional source domain (auto-detected from chain if not provided)
+   * @returns Attestation data including signature and message
+   */
+  async waitForFastAttestation(
+    burnTxHash: Hash,
+    sourceDomain?: CCTPDomain
+  ): Promise<{ attestation: Hex; message?: Hex; messageHash?: Hex }> {
+    const { config } = await this.initialize();
+
+    // Use provided domain or get from config
+    const domain = sourceDomain ?? (config.domain as CCTPDomain);
+
+    return this.attestation.waitForFastAttestation(domain, burnTxHash);
+  }
+
+  /**
+   * Check if fast attestation is ready (non-blocking)
+   *
+   * @param burnTxHash - Transaction hash of the burn transaction
+   * @param sourceDomain - Optional source domain (auto-detected from chain if not provided)
+   * @returns true if attestation is ready
+   */
+  async isFastAttestationReady(
+    burnTxHash: Hash,
+    sourceDomain?: CCTPDomain
+  ): Promise<boolean> {
+    const { config } = await this.initialize();
+
+    // Use provided domain or get from config
+    const domain = sourceDomain ?? (config.domain as CCTPDomain);
+
+    return this.attestation.isFastReady(domain, burnTxHash);
+  }
+
+  /**
+   * Get fast transfer fee quote for a route
+   *
+   * @param destinationChainId - Destination chain ID
+   * @param amount - Amount to transfer (optional, for calculating max fee)
+   * @returns Fee information including percentage and calculated max fee
+   */
+  async getFastTransferFee(
+    destinationChainId: number,
+    amount?: bigint
+  ): Promise<{
+    feePercentage: number;
+    feeBasisPoints: number;
+    maxFee?: bigint;
+    maxFeeFormatted?: string;
+  }> {
+    const { config: sourceConfig } = await this.initialize();
+    const destConfig = getCCTPConfig(destinationChainId);
+
+    if (!destConfig) {
+      throw new BridgeUnsupportedRouteError({
+        sourceChainId: this.sourceChainId ?? 0,
+        destinationChainId,
+        token: 'USDC',
+        supportedChains: this.getSupportedChains(),
+      });
+    }
+
+    const quote = await this.feeClient.getFeeQuote(
+      sourceConfig.domain as CCTPDomain,
+      destConfig.domain
+    );
+
+    const result: {
+      feePercentage: number;
+      feeBasisPoints: number;
+      maxFee?: bigint;
+      maxFeeFormatted?: string;
+    } = {
+      feePercentage: quote.fast.feePercentage,
+      feeBasisPoints: quote.fast.feeBasisPoints,
+    };
+
+    // Calculate max fee if amount provided
+    // Use feeBasisPoints directly to avoid floating point precision issues
+    if (amount !== undefined) {
+      result.maxFee = this.feeClient.calculateMaxFee(amount, quote.fast.feeBasisPoints);
+      result.maxFeeFormatted = formatStablecoinAmount(result.maxFee, USDC);
+    }
+
+    return result;
   }
 }
 
