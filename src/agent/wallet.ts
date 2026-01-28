@@ -44,8 +44,6 @@ import {
   parseTokenAmount,
   formatTokenAmount,
   isNativeETH,
-  getTokenBySymbol,
-  getTokenAddress,
 } from '../tokens/index.js';
 import {
   UniswapClient,
@@ -2132,9 +2130,8 @@ export class AgentWallet {
       return this.cachedETHPrice.value;
     }
 
-    // Get USDC address for this chain
-    const usdcToken = getTokenBySymbol('USDC');
-    const usdcAddress = usdcToken ? getTokenAddress(usdcToken, chainId) : undefined;
+    // Get USDC address for this chain (USDC is a stablecoin, not in regular tokens)
+    const usdcAddress = getStablecoinAddress(USDC, chainId);
     const wethAddress = WETH_ADDRESSES[chainId];
 
     // Fail explicitly if USDC or WETH not available on this chain
