@@ -10,14 +10,18 @@ import type { CCTPDomain } from './types.js';
  * CCTP contract configuration per chain
  */
 export interface CCTPChainConfig {
-  /** TokenMessenger contract address */
+  /** TokenMessenger contract address (v1) */
   tokenMessenger: Address;
-  /** MessageTransmitter contract address */
+  /** MessageTransmitter contract address (v1) */
   messageTransmitter: Address;
   /** Circle's CCTP domain ID for this chain */
   domain: CCTPDomain;
   /** USDC token address on this chain */
   usdc: Address;
+  /** TokenMessengerV2 contract address (for fast transfers) */
+  tokenMessengerV2?: Address;
+  /** MessageTransmitterV2 contract address (for fast transfers) */
+  messageTransmitterV2?: Address;
 }
 
 /**
@@ -76,6 +80,9 @@ export const CCTP_CONTRACTS: Record<number, CCTPChainConfig> = {
     messageTransmitter: '0x7865fAfC2db2093669d92c0F33AeEF291086BEFD' as Address,
     domain: 0,
     usdc: '0x1c7D4B196Cb0C7B01d743Fbc6116a902379C7238' as Address,
+    // V2 contracts for fast transfers
+    tokenMessengerV2: '0x8FE6B999Dc680CcFDD5Bf7EB0974218be2542DAA' as Address,
+    messageTransmitterV2: '0xE737e5cEBEEBa77EFE34D4aa090756590b1CE275' as Address,
   },
   // Avalanche Fuji
   43113: {
@@ -104,6 +111,9 @@ export const CCTP_CONTRACTS: Record<number, CCTPChainConfig> = {
     messageTransmitter: '0x7865fAfC2db2093669d92c0F33AeEF291086BEFD' as Address,
     domain: 6,
     usdc: '0x036CbD53842c5426634e7929541eC2318f3dCF7e' as Address,
+    // V2 contracts for fast transfers
+    tokenMessengerV2: '0x8FE6B999Dc680CcFDD5Bf7EB0974218be2542DAA' as Address,
+    messageTransmitterV2: '0xE737e5cEBEEBa77EFE34D4aa090756590b1CE275' as Address,
   },
   // Polygon Amoy
   80002: {

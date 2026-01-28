@@ -260,10 +260,18 @@ async function runAgentLoop(
 
 **Bridge Mode:** ${fastMode ? 'Fast CCTP (v2) - attestations in ~10-30 seconds' : 'Standard CCTP - attestations in ~15-30 minutes'}
 ${fastMode ? '- Fast mode uses optimistic finality with a small fee (~0.1% or less)' : ''}
-${fastMode ? '- Use eth_waitForFastBridgeAttestation with the burn tx hash for fast attestation' : ''}
+
+**IMPORTANT - Complete Bridge Flow (Fast Mode):**
+Bridging requires 3 steps to fully complete:
+1. **eth_bridge** → Burns tokens on source chain, returns trackingId and sourceTxHash
+2. **eth_waitForFastBridgeAttestation(sourceTxHash)** → Gets attestation (~10-30 seconds), returns attestation and message
+3. **eth_completeBridge(trackingId, attestation, message)** → Mints tokens on destination chain
+
+The tokens will NOT appear on the destination chain until step 3 is executed!
+After step 3 completes, use eth_getStablecoinBalanceOnChain to verify the tokens arrived.
 
 **Bridge Verification:**
-After a bridge operation, you can verify tokens arrived by:
+After completing all 3 steps, verify tokens arrived by:
 1. Using eth_getBridgeStatus to check the bridge progress (should reach 100% when complete)
 2. Using eth_getStablecoinBalanceOnChain to check the actual balance on the destination chain
 

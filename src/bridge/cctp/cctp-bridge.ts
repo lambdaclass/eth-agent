@@ -33,7 +33,7 @@ import {
   BridgeCompletionError,
 } from '../errors.js';
 import { TokenMessengerContract } from './token-messenger.js';
-import { MessageTransmitterContract, decodeMessageHeader, decodeBurnMessageBody } from './message-transmitter.js';
+import { MessageTransmitterContract, decodeBurnMessageBody } from './message-transmitter.js';
 import { AttestationClient } from './attestation.js';
 import { CCTPFeeClient } from './fees.js';
 import { InsufficientFundsError } from '../../agent/errors.js';
@@ -327,11 +327,20 @@ export class CCTPBridge implements BridgeProtocol {
     // Recipient defaults to sender
     const recipient = request.recipient ?? this.account.address;
 
+    // For fast mode, use v2 contract if available
+    const effectiveConfig = this.fast && sourceConfig.tokenMessengerV2
+      ? {
+          ...sourceConfig,
+          tokenMessenger: sourceConfig.tokenMessengerV2,
+          messageTransmitter: sourceConfig.messageTransmitterV2 ?? sourceConfig.messageTransmitter,
+        }
+      : sourceConfig;
+
     // Create TokenMessenger contract
     const tokenMessenger = new TokenMessengerContract({
       rpc: this.sourceRpc,
       account: this.account,
-      cctpConfig: sourceConfig,
+      cctpConfig: effectiveConfig,
     });
 
     // Check USDC balance
@@ -353,7 +362,7 @@ export class CCTPBridge implements BridgeProtocol {
       } catch (error) {
         throw new BridgeApprovalError({
           token: 'USDC',
-          spender: sourceConfig.tokenMessenger,
+          spender: effectiveConfig.tokenMessenger,
           amount: formattedAmount,
           error: error instanceof Error ? error.message : String(error),
         });
@@ -412,69 +421,81 @@ export class CCTPBridge implements BridgeProtocol {
 
   /**
    * Complete a bridge transaction (mint USDC on destination chain)
+   *
+   * @param messageBytes - The message bytes to pass to receiveMessage
+   * @param attestation - The attestation signature from Circle
+   * @param destRpc - RPC client for the destination chain
+   * @param knownValues - Optional known values from the original bridge (avoids parsing v2 messages)
    */
   async completeBridge(
     messageBytes: Hex,
     attestation: Hex,
-    destRpc: RPCClient
+    destRpc: RPCClient,
+    knownValues?: {
+      amount?: bigint;
+      recipient?: Address;
+    }
   ): Promise<BridgeCompleteResult> {
-    // Decode message to get destination info
-    const header = decodeMessageHeader(messageBytes);
-
-    // Decode the burn message body to get amount
-    const burnMessage = decodeBurnMessageBody(messageBytes);
-
     // Get destination config
     const destChainId = await destRpc.getChainId();
     const destConfig = getCCTPConfig(destChainId);
 
     if (!destConfig) {
       throw new BridgeUnsupportedRouteError({
-        sourceChainId: header.sourceDomain,
+        sourceChainId: 0,
         destinationChainId: destChainId,
         token: 'USDC',
         supportedChains: this.getSupportedChains(),
       });
     }
 
-    // Verify destination domain matches
-    if (destConfig.domain !== header.destinationDomain) {
-      throw new BridgeCompletionError({
-        messageHash: '0x',
-        error: `Message destination domain ${String(header.destinationDomain)} does not match chain domain ${String(destConfig.domain)}`,
-      });
-    }
+    // For fast mode, use v2 MessageTransmitter if available
+    // V2 attestations require V2 contracts (different attester keys)
+    const effectiveConfig = this.fast && destConfig.messageTransmitterV2
+      ? {
+          ...destConfig,
+          messageTransmitter: destConfig.messageTransmitterV2,
+        }
+      : destConfig;
 
     // Create MessageTransmitter contract
     const messageTransmitter = new MessageTransmitterContract({
       rpc: destRpc,
       account: this.account,
-      cctpConfig: destConfig,
+      cctpConfig: effectiveConfig,
     });
-
-    // Check if nonce already used
-    const nonceUsed = await messageTransmitter.isNonceUsed(header.sourceDomain, header.nonce);
-    if (nonceUsed) {
-      throw new BridgeCompletionError({
-        messageHash: '0x',
-        error: 'Message has already been processed',
-      });
-    }
 
     // Execute receiveMessage
     try {
       const result = await messageTransmitter.receiveMessage(messageBytes, attestation);
 
-      // Extract recipient from burn message
-      const recipientHex = burnMessage.mintRecipient.slice(-40);
-      const recipient = `0x${recipientHex}` as Address;
+      // Use known values if provided, otherwise try to parse from message
+      let amount = knownValues?.amount;
+      let recipient = knownValues?.recipient;
+
+      if (amount === undefined || recipient === undefined) {
+        try {
+          const burnMessage = decodeBurnMessageBody(messageBytes);
+          if (amount === undefined) {
+            amount = burnMessage.amount;
+          }
+          if (recipient === undefined) {
+            const recipientHex = burnMessage.mintRecipient.slice(-40);
+            recipient = `0x${recipientHex}` as Address;
+          }
+        } catch {
+          // If parsing fails, use defaults
+          amount = amount ?? 0n;
+          recipient = recipient ?? this.account.address;
+        }
+      }
 
       return {
         success: result.success,
         mintTxHash: result.hash,
         amount: {
-          raw: burnMessage.amount,
-          formatted: formatStablecoinAmount(burnMessage.amount, USDC),
+          raw: amount,
+          formatted: formatStablecoinAmount(amount, USDC),
         },
         recipient,
       };

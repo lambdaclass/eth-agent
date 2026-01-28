@@ -144,8 +144,8 @@ export class AttestationClient {
     // Ensure 0x prefix is present
     const hash = txHash.startsWith('0x') ? txHash : `0x${txHash}`;
 
-    // v2 API format: /v2/messages/{sourceDomain}/{txHash}
-    const url = `${this.fastBaseUrl}/${String(sourceDomain)}/${hash}`;
+    // v2 API format: /v2/messages/{sourceDomain}?transactionHash={txHash}
+    const url = `${this.fastBaseUrl}/${String(sourceDomain)}?transactionHash=${hash}`;
 
     try {
       const controller = new AbortController();

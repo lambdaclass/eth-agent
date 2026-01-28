@@ -70,6 +70,10 @@ export interface BridgeMetadata {
   destinationDomain?: number;
   /** Destination chain ID */
   destinationChainId?: number;
+  /** Bridge amount (raw, in token's smallest unit) */
+  amount?: bigint;
+  /** Recipient address on destination chain */
+  recipient?: string;
   /** Timestamp when bridge was initiated */
   createdAt: number;
 }

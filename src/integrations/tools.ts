@@ -993,6 +993,72 @@ Example: After bridging, use the burnTxHash to wait for the fast attestation.`,
     },
 
     {
+      name: 'eth_completeBridge',
+      description: `Complete a bridge operation by minting tokens on the destination chain.
+
+After a bridge is initiated and attestation is received, this tool calls receiveMessage()
+on the destination chain's MessageTransmitter to mint the bridged tokens.
+
+IMPORTANT: This is required to complete the bridge! The tokens won't appear on the
+destination chain until this step is executed.
+
+Flow:
+1. eth_bridge → Burns tokens on source, returns trackingId and sourceTxHash
+2. eth_waitForFastBridgeAttestation → Gets attestation (includes message bytes)
+3. eth_completeBridge → Mints tokens on destination using attestation
+
+The message bytes come from the attestation result (attestation.message field).`,
+      parameters: {
+        type: 'object',
+        properties: {
+          trackingId: {
+            type: 'string',
+            description: 'The tracking ID returned from eth_bridge',
+          },
+          attestation: {
+            type: 'string',
+            description: 'The attestation signature from eth_waitForFastBridgeAttestation',
+          },
+          messageBytes: {
+            type: 'string',
+            description: 'The message bytes from the attestation result (attestation.message field)',
+          },
+        },
+        required: ['trackingId', 'attestation', 'messageBytes'],
+      },
+      handler: async (params) => {
+        try {
+          const result = await wallet.completeBridge({
+            trackingId: params['trackingId'] as string,
+            attestation: params['attestation'] as Hex,
+            messageBytes: params['messageBytes'] as Hex,
+          });
+
+          return {
+            success: result.success,
+            data: {
+              mintTxHash: result.mintTxHash,
+              amount: result.amount,
+              recipient: result.recipient,
+            },
+            summary: `Bridge completed! Minted ${result.amount.formatted} USDC to ${result.recipient}. TX: ${result.mintTxHash.slice(0, 10)}...`,
+          };
+        } catch (err) {
+          return {
+            success: false,
+            error: (err as Error).message,
+            summary: `Failed to complete bridge: ${(err as Error).message}`,
+          };
+        }
+      },
+      metadata: {
+        category: 'write',
+        requiresApproval: true,
+        riskLevel: 'medium',
+      },
+    },
+
+    {
       name: 'eth_getFastBridgeFee',
       description: `Get the fee for fast CCTP transfers to a destination chain.
 Fast transfers use optimistic finality and require a small fee (typically ~0.1% or less).

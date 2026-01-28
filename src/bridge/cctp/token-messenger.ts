@@ -5,8 +5,7 @@
  * Supports:
  * - depositForBurn (4 params) - basic v1 transfer
  * - depositForBurnWithCaller (5 params) - v1 with destinationCaller restriction
- *
- * Note: Fast attestations are achieved via the v2 attestation API, not contract params.
+ * - depositForBurn (7 params) - v2 with maxFee and minFinalityThreshold for fast transfers
  */
 
 import type { Address, Hash, Hex, ABI, Log } from '../../core/types.js';
@@ -36,15 +35,15 @@ export interface DepositForBurnParams {
 }
 
 /**
- * Parameters for depositForBurnWithCaller
- * Note: maxFee and minFinalityThreshold are reserved for future v2 contract support
+ * Parameters for v2 depositForBurn with fast transfer support
+ * When maxFee and minFinalityThreshold are provided, uses v2 contract function (7 params)
  */
 export interface DepositForBurnV2Params extends DepositForBurnParams {
   /** Address that can call receiveMessage on destination (bytes32). If zero, anyone can. */
   destinationCaller?: Address;
-  /** Reserved for future v2 contract support - not currently used */
+  /** Maximum fee willing to pay for fast transfer (in USDC raw units, 6 decimals) */
   maxFee?: bigint;
-  /** Reserved for future v2 contract support - not currently used */
+  /** Finality threshold: 1000 for fast (confirmed), 2000 for standard (finalized) */
   minFinalityThreshold?: CCTPFinalityThreshold;
 }
 
@@ -108,6 +107,13 @@ export const TOKEN_MESSENGER_ABI: ABI = [
  * Available on both v1 and v2 contracts - adds destinationCaller to control who can mint
  */
 const DEPOSIT_FOR_BURN_WITH_CALLER_SIGNATURE = 'depositForBurnWithCaller(uint256,uint32,bytes32,address,bytes32)';
+
+/**
+ * depositForBurn v2 function signature (7 params)
+ * Only available on v2 contracts - includes maxFee and minFinalityThreshold for fast transfers
+ * Signature: depositForBurn(uint256 amount, uint32 destinationDomain, bytes32 mintRecipient, address burnToken, bytes32 destinationCaller, uint256 maxFee, uint32 minFinalityThreshold)
+ */
+const DEPOSIT_FOR_BURN_V2_SIGNATURE = 'depositForBurn(uint256,uint32,bytes32,address,bytes32,uint256,uint32)';
 
 /**
  * MessageSent event ABI from MessageTransmitter
@@ -181,12 +187,12 @@ export class TokenMessengerContract {
   }
 
   /**
-   * Deposit USDC for burning with destinationCaller (for fast transfer support)
+   * Deposit USDC for burning with v2 contract support for fast transfers
    *
-   * Uses depositForBurnWithCaller which is available on both v1 and v2 contracts.
-   * Fast attestation is achieved via the v2 attestation API, not contract parameters.
+   * If maxFee and minFinalityThreshold are provided, uses the v2 contract function
+   * (7 params) which enables fast attestation. Otherwise falls back to v1 function.
    *
-   * @param params - Parameters including optional destinationCaller
+   * @param params - Parameters including optional destinationCaller, maxFee, minFinalityThreshold
    * @returns Transaction result with message details
    */
   async depositForBurnV2(params: DepositForBurnV2Params): Promise<DepositForBurnResult> {
@@ -198,17 +204,31 @@ export class TokenMessengerContract {
       ? addressToBytes32(params.destinationCaller)
       : ZERO_BYTES32;
 
-    // Note: maxFee and minFinalityThreshold are not used in depositForBurnWithCaller
-    // Fast attestation is achieved via the v2 attestation API endpoint instead
+    let data: Hex;
 
-    // Use depositForBurnWithCaller (5 params) - available on all CCTP contracts
-    const data = encodeFunctionCall(DEPOSIT_FOR_BURN_WITH_CALLER_SIGNATURE, [
-      params.amount,
-      params.destinationDomain,
-      mintRecipientBytes32,
-      params.burnToken,
-      destinationCallerBytes32,
-    ]);
+    // If maxFee and minFinalityThreshold are provided, use v2 contract function (7 params)
+    // This enables fast attestation by signaling to Circle that we're willing to pay the fast fee
+    if (params.maxFee !== undefined && params.minFinalityThreshold !== undefined) {
+      // Use v2 depositForBurn (7 params) for fast transfers
+      data = encodeFunctionCall(DEPOSIT_FOR_BURN_V2_SIGNATURE, [
+        params.amount,
+        params.destinationDomain,
+        mintRecipientBytes32,
+        params.burnToken,
+        destinationCallerBytes32,
+        params.maxFee,
+        params.minFinalityThreshold,
+      ]);
+    } else {
+      // Fall back to v1 depositForBurnWithCaller (5 params)
+      data = encodeFunctionCall(DEPOSIT_FOR_BURN_WITH_CALLER_SIGNATURE, [
+        params.amount,
+        params.destinationDomain,
+        mintRecipientBytes32,
+        params.burnToken,
+        destinationCallerBytes32,
+      ]);
+    }
 
     // Estimate gas
     const gasOracle = new GasOracle(this.rpc);

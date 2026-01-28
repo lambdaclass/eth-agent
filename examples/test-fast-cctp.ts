@@ -214,10 +214,11 @@ async function main(): Promise<void> {
   log('This should take 10-30 seconds with fast mode...', colors.dim);
 
   const attestationStartTime = Date.now();
+  let attestationResult: { attestation: `0x${string}`; message?: `0x${string}`; messageHash?: `0x${string}` };
 
   try {
     // Use fast attestation method
-    const attestationResult = await wallet.waitForFastBridgeAttestation(burnTxHash);
+    attestationResult = await wallet.waitForFastBridgeAttestation(burnTxHash);
     const attestationTime = Date.now() - attestationStartTime;
 
     logSuccess(`Attestation received in ${(attestationTime / 1000).toFixed(1)}s!`);
@@ -233,8 +234,38 @@ async function main(): Promise<void> {
     process.exit(1);
   }
 
+  // Complete bridge on destination chain
+  logStep(8, 'Completing bridge on destination chain');
+  log('Calling receiveMessage on destination to mint USDC...', colors.dim);
+
+  try {
+    // For fast attestations, prefer the message from the attestation result
+    // as it's what Circle actually signed. Fall back to the burn result's message.
+    const messageBytes = attestationResult.message ?? result.protocolData?.messageBytes;
+    if (!messageBytes) {
+      throw new Error('Missing messageBytes from bridge or attestation result');
+    }
+
+    logInfo('Using message', messageBytes.slice(0, 66) + '...');
+
+    const completion = await wallet.completeBridge({
+      trackingId: result.trackingId,
+      attestation: attestationResult.attestation,
+      messageBytes: messageBytes as `0x${string}`,
+    });
+
+    logSuccess('Bridge completed on destination!');
+    logInfo('Mint TX', completion.mintTxHash);
+    logInfo('Amount minted', `${completion.amount.formatted} USDC`);
+    logInfo('Recipient', completion.recipient);
+  } catch (err) {
+    logError(`Bridge completion failed: ${(err as Error).message}`);
+    log('\nThe attestation was received but USDC was not minted on destination.', colors.dim);
+    log('You may need to manually call receiveMessage on the destination chain.', colors.dim);
+  }
+
   // Check final status
-  logStep(8, 'Checking bridge status');
+  logStep(9, 'Checking bridge status');
   try {
     const status = await wallet.getBridgeStatusByTrackingId(result.trackingId);
     logInfo('Status', status.status);
@@ -246,7 +277,7 @@ async function main(): Promise<void> {
   }
 
   // Check destination balance
-  logStep(9, 'Checking destination balance');
+  logStep(10, 'Checking destination balance');
   try {
     // Get USDC address on destination chain
     const destTokenAddress = getStablecoinAddress(USDC, CONFIG.destinationChainId);

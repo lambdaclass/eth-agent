@@ -1136,6 +1136,53 @@ export class AgentWallet {
   }
 
   /**
+   * Complete a bridge on the destination chain
+   *
+   * After getting an attestation (via waitForFastBridgeAttestation or waitForBridgeAttestation),
+   * this method calls receiveMessage() on the destination chain to mint the USDC.
+   *
+   * IMPORTANT: A destination RPC must be registered first using registerDestinationRpc().
+   *
+   * @param options - Completion options from the bridge result
+   * @returns Completion result including mint transaction hash
+   *
+   * @example
+   * ```typescript
+   * // Step 1: Initiate bridge
+   * const result = await wallet.bridge({
+   *   token: USDC,
+   *   amount: '100',
+   *   destinationChainId: 84532,
+   * });
+   *
+   * // Step 2: Wait for attestation (fast mode)
+   * const attestation = await wallet.waitForFastBridgeAttestation(result.sourceTxHash);
+   *
+   * // Step 3: Complete bridge on destination chain
+   * const completion = await wallet.completeBridge({
+   *   trackingId: result.trackingId,
+   *   attestation: attestation.attestation,
+   *   messageBytes: result.protocolData.messageBytes,
+   * });
+   *
+   * console.log('USDC minted on destination:', completion.mintTxHash);
+   * ```
+   */
+  async completeBridge(options: {
+    trackingId: string;
+    attestation: Hex;
+    messageBytes: Hex;
+  }): Promise<{
+    success: boolean;
+    mintTxHash: Hash;
+    amount: { raw: bigint; formatted: string };
+    recipient: string;
+  }> {
+    const router = await this.getBridgeRouter();
+    return router.completeBridge(options);
+  }
+
+  /**
    * Get fast transfer fee quote for a destination chain
    *
    * @param destinationChainId - Target chain ID
