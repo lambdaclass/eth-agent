@@ -3,7 +3,13 @@
  */
 
 import { describe, it, expect } from 'vitest';
-import { TrackingRegistry } from '../../../src/bridge/router/tracking.js';
+import {
+  TrackingRegistry,
+  getTrackingRegistry,
+  createTrackingId,
+  parseTrackingId,
+  isValidTrackingId,
+} from '../../../src/bridge/router/tracking.js';
 
 describe('TrackingRegistry', () => {
   describe('createTrackingId', () => {
@@ -174,5 +180,87 @@ describe('TrackingRegistry', () => {
       expect(parsed!.destinationChainId).toBe(10);
       expect(parsed!.identifier).toBe('0xabcdef1234567890');
     });
+  });
+
+  describe('utility methods', () => {
+    it('isValidTrackingId should return true for valid tracking IDs', () => {
+      const registry = new TrackingRegistry();
+      expect(registry.isValidTrackingId('bridge_cctp_1_8453_0xabc123')).toBe(true);
+      expect(registry.isValidTrackingId('bridge_cctp_1_0xabc123')).toBe(true);
+    });
+
+    it('isValidTrackingId should return false for invalid tracking IDs', () => {
+      const registry = new TrackingRegistry();
+      expect(registry.isValidTrackingId('invalid')).toBe(false);
+      expect(registry.isValidTrackingId('notbridge_cctp_1_0x123')).toBe(false);
+    });
+
+    it('getProtocol should return protocol name', () => {
+      const registry = new TrackingRegistry();
+      expect(registry.getProtocol('bridge_cctp_1_8453_0xabc')).toBe('cctp');
+      expect(registry.getProtocol('bridge_stargate_42161_1_0xdef')).toBe('stargate');
+    });
+
+    it('getProtocol should return null for invalid tracking ID', () => {
+      const registry = new TrackingRegistry();
+      expect(registry.getProtocol('invalid')).toBeNull();
+    });
+
+    it('getIdentifier should return the identifier', () => {
+      const registry = new TrackingRegistry();
+      expect(registry.getIdentifier('bridge_cctp_1_8453_0xabc123')).toBe('0xabc123');
+    });
+
+    it('getIdentifier should return null for invalid tracking ID', () => {
+      const registry = new TrackingRegistry();
+      expect(registry.getIdentifier('invalid')).toBeNull();
+    });
+
+    it('getIdentifierAsHex should return hex identifier', () => {
+      const registry = new TrackingRegistry();
+      expect(registry.getIdentifierAsHex('bridge_cctp_1_8453_0xabc123')).toBe('0xabc123');
+    });
+
+    it('getIdentifierAsHex should return null for non-hex identifier', () => {
+      const registry = new TrackingRegistry();
+      expect(registry.getIdentifierAsHex('bridge_across_1_8453_12345')).toBeNull();
+    });
+
+    it('getIdentifierAsHex should return null for invalid tracking ID', () => {
+      const registry = new TrackingRegistry();
+      expect(registry.getIdentifierAsHex('invalid')).toBeNull();
+    });
+  });
+});
+
+describe('exported helper functions', () => {
+  it('getTrackingRegistry returns singleton instance', () => {
+    const registry1 = getTrackingRegistry();
+    const registry2 = getTrackingRegistry();
+    expect(registry1).toBe(registry2);
+  });
+
+  it('createTrackingId uses default registry', () => {
+    const trackingId = createTrackingId({
+      info: {
+        protocol: 'CCTP',
+        identifier: '0xhelper123',
+        identifierType: 'messageHash',
+      },
+      sourceChainId: 1,
+      destinationChainId: 8453,
+    });
+    expect(trackingId).toBe('bridge_cctp_1_8453_0xhelper123');
+  });
+
+  it('parseTrackingId uses default registry', () => {
+    const parsed = parseTrackingId('bridge_cctp_1_8453_0xhelper123');
+    expect(parsed).not.toBeNull();
+    expect(parsed!.protocol).toBe('cctp');
+  });
+
+  it('isValidTrackingId uses default registry', () => {
+    expect(isValidTrackingId('bridge_cctp_1_8453_0xabc')).toBe(true);
+    expect(isValidTrackingId('invalid')).toBe(false);
   });
 });

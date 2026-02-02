@@ -3,6 +3,13 @@ import { createTools, getTool, executeTool, type ToolDefinition } from '../../sr
 import type { AgentWallet } from '../../src/agent/wallet.js';
 import type { Address } from '../../src/core/types.js';
 
+// Mock RPCClient for eth_getStablecoinBalanceOnChain tests
+vi.mock('../../src/protocol/rpc.js', () => ({
+  RPCClient: vi.fn().mockImplementation(() => ({
+    call: vi.fn(),
+  })),
+}));
+
 describe('Tools', () => {
   const testAddress = '0x1234567890123456789012345678901234567890' as Address;
   const recipient = '0xabcdefabcdefabcdefabcdefabcdefabcdefabcd' as Address;
@@ -1150,6 +1157,146 @@ describe('Tools', () => {
       expect(tool.metadata.category).toBe('info');
       expect(tool.metadata.requiresApproval).toBe(false);
       expect(tool.metadata.riskLevel).toBe('none');
+    });
+  });
+
+  describe('eth_getStablecoinBalanceOnChain tool', () => {
+    beforeEach(() => {
+      tools = createTools(mockWallet);
+    });
+
+    it('exists in tools list', () => {
+      const toolNames = tools.map((t) => t.name);
+      expect(toolNames).toContain('eth_getStablecoinBalanceOnChain');
+    });
+
+    it('has correct parameters schema', () => {
+      const tool = getTool(tools, 'eth_getStablecoinBalanceOnChain');
+      expect(tool).toBeDefined();
+      expect(tool!.parameters.properties).toHaveProperty('token');
+      expect(tool!.parameters.properties).toHaveProperty('chainId');
+      expect(tool!.parameters.properties).toHaveProperty('address');
+      expect(tool!.parameters.properties).toHaveProperty('rpcUrl');
+      expect(tool!.parameters.required).toContain('token');
+      expect(tool!.parameters.required).toContain('chainId');
+      expect(tool!.parameters.required).not.toContain('address');
+      expect(tool!.parameters.required).not.toContain('rpcUrl');
+    });
+
+    it('handles unknown stablecoin', async () => {
+      const tool = getTool(tools, 'eth_getStablecoinBalanceOnChain')!;
+      const result = await tool.handler({
+        token: 'INVALID',
+        chainId: 8453,
+      });
+
+      expect(result.success).toBe(false);
+      expect(result.error).toContain('Unknown stablecoin');
+    });
+
+    it('handles unsupported chain for token', async () => {
+      const tool = getTool(tools, 'eth_getStablecoinBalanceOnChain')!;
+      // Use a chain ID where USDC is not deployed
+      const result = await tool.handler({
+        token: 'USDC',
+        chainId: 999999,
+      });
+
+      expect(result.success).toBe(false);
+      expect(result.error).toContain('not supported');
+    });
+
+    it('has correct metadata', () => {
+      const tool = getTool(tools, 'eth_getStablecoinBalanceOnChain')!;
+      expect(tool.metadata.category).toBe('read');
+      expect(tool.metadata.requiresApproval).toBe(false);
+      expect(tool.metadata.riskLevel).toBe('none');
+    });
+
+    it('gets balance on supported chain', async () => {
+      // Import and set up mock
+      const { RPCClient } = await import('../../src/protocol/rpc.js');
+      const mockCall = vi.fn().mockResolvedValue('0x5f5e100'); // 100 USDC (100 * 10^6)
+      (RPCClient as unknown as ReturnType<typeof vi.fn>).mockImplementation(() => ({
+        call: mockCall,
+      }));
+
+      const tool = getTool(tools, 'eth_getStablecoinBalanceOnChain')!;
+      const result = await tool.handler({
+        token: 'USDC',
+        chainId: 8453, // Base
+      });
+
+      expect(result.success).toBe(true);
+      expect(result.data).toHaveProperty('symbol', 'USDC');
+      expect(result.data).toHaveProperty('chain', 'Base');
+      expect(result.data).toHaveProperty('chainId', 8453);
+      expect(result.summary).toContain('USDC balance on Base');
+    });
+
+    it('uses custom address when provided', async () => {
+      const { RPCClient } = await import('../../src/protocol/rpc.js');
+      const mockCall = vi.fn().mockResolvedValue('0x0');
+      (RPCClient as unknown as ReturnType<typeof vi.fn>).mockImplementation(() => ({
+        call: mockCall,
+      }));
+
+      const customAddress = '0x9999999999999999999999999999999999999999';
+      const tool = getTool(tools, 'eth_getStablecoinBalanceOnChain')!;
+      const result = await tool.handler({
+        token: 'USDC',
+        chainId: 8453,
+        address: customAddress,
+      });
+
+      expect(result.success).toBe(true);
+      expect(result.data).toHaveProperty('address', customAddress);
+    });
+
+    it('handles RPC errors', async () => {
+      const { RPCClient } = await import('../../src/protocol/rpc.js');
+      (RPCClient as unknown as ReturnType<typeof vi.fn>).mockImplementation(() => ({
+        call: vi.fn().mockRejectedValue(new Error('RPC connection failed')),
+      }));
+
+      const tool = getTool(tools, 'eth_getStablecoinBalanceOnChain')!;
+      const result = await tool.handler({
+        token: 'USDC',
+        chainId: 8453,
+      });
+
+      expect(result.success).toBe(false);
+      expect(result.error).toContain('RPC connection failed');
+    });
+
+    it('handles chain with no default RPC URL', async () => {
+      const tool = getTool(tools, 'eth_getStablecoinBalanceOnChain')!;
+      // Chain 56 (BNB) has USDC deployed but no default RPC URL in tools.ts
+      const result = await tool.handler({
+        token: 'USDC',
+        chainId: 56,
+      });
+
+      expect(result.success).toBe(false);
+      expect(result.error).toContain('No RPC URL available');
+    });
+
+    it('uses custom RPC URL when provided', async () => {
+      const { RPCClient } = await import('../../src/protocol/rpc.js');
+      const mockCall = vi.fn().mockResolvedValue('0x5f5e100');
+      (RPCClient as unknown as ReturnType<typeof vi.fn>).mockImplementation(() => ({
+        call: mockCall,
+      }));
+
+      const tool = getTool(tools, 'eth_getStablecoinBalanceOnChain')!;
+      const result = await tool.handler({
+        token: 'USDC',
+        chainId: 56, // BNB Chain - no default RPC
+        rpcUrl: 'https://custom-rpc.example.com',
+      });
+
+      expect(result.success).toBe(true);
+      expect(RPCClient).toHaveBeenCalledWith('https://custom-rpc.example.com');
     });
   });
 });
