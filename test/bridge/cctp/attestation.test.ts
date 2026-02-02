@@ -248,4 +248,396 @@ describe('AttestationClient', () => {
       expect(client).toBeInstanceOf(AttestationClient);
     });
   });
+
+  describe('getAttestation extended', () => {
+    it('should return pending on 400 status (message not indexed yet)', async () => {
+      const fetchMock = vi.fn().mockResolvedValue({
+        ok: false,
+        status: 400,
+        statusText: 'Bad Request',
+      });
+      vi.stubGlobal('fetch', fetchMock);
+
+      const client = new AttestationClient();
+      const result = await client.getAttestation(mockMessageHash);
+
+      expect(result.status).toBe('pending');
+    });
+
+    it('should add 0x prefix to message hash if missing', async () => {
+      const fetchMock = vi.fn().mockResolvedValue({
+        ok: false,
+        status: 404,
+      });
+      vi.stubGlobal('fetch', fetchMock);
+
+      const client = new AttestationClient();
+      // Message hash without 0x prefix
+      await client.getAttestation('1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef' as Hex);
+
+      const calledUrl = fetchMock.mock.calls[0][0];
+      expect(calledUrl).toContain('0x1234567890abcdef');
+    });
+
+    it('should handle network errors', async () => {
+      const fetchMock = vi.fn().mockRejectedValue(new Error('Network error'));
+      vi.stubGlobal('fetch', fetchMock);
+
+      const client = new AttestationClient();
+
+      await expect(client.getAttestation(mockMessageHash)).rejects.toThrow(BridgeAttestationError);
+    });
+
+    it('should handle timeout errors', async () => {
+      const fetchMock = vi.fn().mockRejectedValue(new Error('The operation was aborted'));
+      vi.stubGlobal('fetch', fetchMock);
+
+      const client = new AttestationClient();
+
+      await expect(client.getAttestation(mockMessageHash)).rejects.toThrow('timed out');
+    });
+
+    it('should return pending status when attestation field is empty string', async () => {
+      const fetchMock = vi.fn().mockResolvedValue({
+        ok: true,
+        json: () => Promise.resolve({
+          status: 'pending',
+          attestation: '',
+        }),
+      });
+      vi.stubGlobal('fetch', fetchMock);
+
+      const client = new AttestationClient();
+      const result = await client.getAttestation(mockMessageHash);
+
+      expect(result.status).toBe('pending');
+      expect(result.attestation).toBeUndefined();
+    });
+  });
+
+  describe('getFastAttestation', () => {
+    const mockTxHash = '0xabcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890' as Hex;
+
+    it('should return pending when attestation not ready', async () => {
+      const fetchMock = vi.fn().mockResolvedValue({
+        ok: false,
+        status: 404,
+        statusText: 'Not Found',
+      });
+      vi.stubGlobal('fetch', fetchMock);
+
+      const client = new AttestationClient();
+      const result = await client.getFastAttestation(0, mockTxHash);
+
+      expect(result.status).toBe('pending');
+    });
+
+    it('should return complete status with attestation', async () => {
+      const fetchMock = vi.fn().mockResolvedValue({
+        ok: true,
+        json: () => Promise.resolve({
+          messages: [{
+            status: 'complete',
+            attestation: mockAttestation,
+            message: '0xmessagedata',
+            messageHash: '0xmessagehash',
+          }],
+        }),
+      });
+      vi.stubGlobal('fetch', fetchMock);
+
+      const client = new AttestationClient();
+      const result = await client.getFastAttestation(0, mockTxHash);
+
+      expect(result.status).toBe('complete');
+      expect(result.attestation).toBe(mockAttestation);
+      expect(result.message).toBe('0xmessagedata');
+      expect(result.messageHash).toBe('0xmessagehash');
+    });
+
+    it('should add 0x prefix to attestation, message, and messageHash if missing', async () => {
+      const fetchMock = vi.fn().mockResolvedValue({
+        ok: true,
+        json: () => Promise.resolve({
+          messages: [{
+            status: 'complete',
+            attestation: 'aabbccdd',
+            message: 'messagedata',
+            messageHash: 'messagehash',
+          }],
+        }),
+      });
+      vi.stubGlobal('fetch', fetchMock);
+
+      const client = new AttestationClient();
+      const result = await client.getFastAttestation(0, mockTxHash);
+
+      expect(result.attestation).toBe('0xaabbccdd');
+      expect(result.message).toBe('0xmessagedata');
+      expect(result.messageHash).toBe('0xmessagehash');
+    });
+
+    it('should return pending when messages array is empty', async () => {
+      const fetchMock = vi.fn().mockResolvedValue({
+        ok: true,
+        json: () => Promise.resolve({
+          messages: [],
+        }),
+      });
+      vi.stubGlobal('fetch', fetchMock);
+
+      const client = new AttestationClient();
+      const result = await client.getFastAttestation(0, mockTxHash);
+
+      expect(result.status).toBe('pending');
+    });
+
+    it('should return pending when messages is undefined', async () => {
+      const fetchMock = vi.fn().mockResolvedValue({
+        ok: true,
+        json: () => Promise.resolve({}),
+      });
+      vi.stubGlobal('fetch', fetchMock);
+
+      const client = new AttestationClient();
+      const result = await client.getFastAttestation(0, mockTxHash);
+
+      expect(result.status).toBe('pending');
+    });
+
+    it('should throw error on non-404 HTTP error', async () => {
+      const fetchMock = vi.fn().mockResolvedValue({
+        ok: false,
+        status: 500,
+        statusText: 'Internal Server Error',
+      });
+      vi.stubGlobal('fetch', fetchMock);
+
+      const client = new AttestationClient();
+
+      await expect(client.getFastAttestation(0, mockTxHash)).rejects.toThrow(BridgeAttestationError);
+    });
+
+    it('should handle network errors', async () => {
+      const fetchMock = vi.fn().mockRejectedValue(new Error('Network error'));
+      vi.stubGlobal('fetch', fetchMock);
+
+      const client = new AttestationClient();
+
+      await expect(client.getFastAttestation(0, mockTxHash)).rejects.toThrow('Fast API error');
+    });
+
+    it('should handle timeout errors', async () => {
+      const fetchMock = vi.fn().mockRejectedValue(new Error('The operation was aborted'));
+      vi.stubGlobal('fetch', fetchMock);
+
+      const client = new AttestationClient();
+
+      await expect(client.getFastAttestation(0, mockTxHash)).rejects.toThrow('timed out');
+    });
+
+    it('should add 0x prefix to tx hash if missing', async () => {
+      const fetchMock = vi.fn().mockResolvedValue({
+        ok: false,
+        status: 404,
+      });
+      vi.stubGlobal('fetch', fetchMock);
+
+      const client = new AttestationClient();
+      // Tx hash without 0x prefix
+      await client.getFastAttestation(0, 'abcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890' as Hex);
+
+      const calledUrl = fetchMock.mock.calls[0][0];
+      expect(calledUrl).toContain('0xabcdef1234567890');
+    });
+
+    it('should handle pending status in message', async () => {
+      const fetchMock = vi.fn().mockResolvedValue({
+        ok: true,
+        json: () => Promise.resolve({
+          messages: [{
+            status: 'pending',
+          }],
+        }),
+      });
+      vi.stubGlobal('fetch', fetchMock);
+
+      const client = new AttestationClient();
+      const result = await client.getFastAttestation(0, mockTxHash);
+
+      expect(result.status).toBe('pending');
+      expect(result.attestation).toBeUndefined();
+    });
+
+    it('should handle empty attestation string', async () => {
+      const fetchMock = vi.fn().mockResolvedValue({
+        ok: true,
+        json: () => Promise.resolve({
+          messages: [{
+            status: 'complete',
+            attestation: '',
+          }],
+        }),
+      });
+      vi.stubGlobal('fetch', fetchMock);
+
+      const client = new AttestationClient();
+      const result = await client.getFastAttestation(0, mockTxHash);
+
+      expect(result.status).toBe('complete');
+      expect(result.attestation).toBeUndefined();
+    });
+  });
+
+  describe('isFastReady', () => {
+    const mockTxHash = '0xabcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890' as Hex;
+
+    it('should return true when fast attestation is complete', async () => {
+      const fetchMock = vi.fn().mockResolvedValue({
+        ok: true,
+        json: () => Promise.resolve({
+          messages: [{
+            status: 'complete',
+            attestation: mockAttestation,
+          }],
+        }),
+      });
+      vi.stubGlobal('fetch', fetchMock);
+
+      const client = new AttestationClient();
+      const ready = await client.isFastReady(0, mockTxHash);
+
+      expect(ready).toBe(true);
+    });
+
+    it('should return false when fast attestation is pending', async () => {
+      const fetchMock = vi.fn().mockResolvedValue({
+        ok: false,
+        status: 404,
+      });
+      vi.stubGlobal('fetch', fetchMock);
+
+      const client = new AttestationClient();
+      const ready = await client.isFastReady(0, mockTxHash);
+
+      expect(ready).toBe(false);
+    });
+  });
+
+  describe('waitForFastAttestation', () => {
+    const mockTxHash = '0xabcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890' as Hex;
+
+    it('should return attestation when immediately ready', async () => {
+      const fetchMock = vi.fn().mockResolvedValue({
+        ok: true,
+        json: () => Promise.resolve({
+          messages: [{
+            status: 'complete',
+            attestation: mockAttestation,
+            message: '0xmessage',
+            messageHash: '0xhash',
+          }],
+        }),
+      });
+      vi.stubGlobal('fetch', fetchMock);
+
+      const client = new AttestationClient();
+      const result = await client.waitForFastAttestation(0, mockTxHash);
+
+      expect(result.attestation).toBe(mockAttestation);
+      expect(result.message).toBe('0xmessage');
+      expect(result.messageHash).toBe('0xhash');
+    });
+
+    it('should poll and return when fast attestation becomes ready', async () => {
+      let callCount = 0;
+      const fetchMock = vi.fn().mockImplementation(() => {
+        callCount++;
+        if (callCount < 3) {
+          return Promise.resolve({
+            ok: false,
+            status: 404,
+          });
+        }
+        return Promise.resolve({
+          ok: true,
+          json: () => Promise.resolve({
+            messages: [{
+              status: 'complete',
+              attestation: mockAttestation,
+            }],
+          }),
+        });
+      });
+      vi.stubGlobal('fetch', fetchMock);
+
+      const client = new AttestationClient();
+
+      const resultPromise = client.waitForFastAttestation(0, mockTxHash, {
+        pollingInterval: 100,
+        maxWaitTime: 10000,
+      });
+
+      // Advance timers to simulate polling
+      await vi.advanceTimersByTimeAsync(100);
+      await vi.advanceTimersByTimeAsync(100);
+      await vi.advanceTimersByTimeAsync(100);
+
+      const result = await resultPromise;
+      expect(result.attestation).toBe(mockAttestation);
+      expect(callCount).toBe(3);
+    });
+
+    it('should throw timeout error after max wait time', async () => {
+      const fetchMock = vi.fn().mockResolvedValue({
+        ok: false,
+        status: 404,
+      });
+      vi.stubGlobal('fetch', fetchMock);
+
+      const client = new AttestationClient();
+
+      let caughtError: Error | undefined;
+      const resultPromise = client.waitForFastAttestation(0, mockTxHash, {
+        pollingInterval: 100,
+        maxWaitTime: 500,
+      }).catch((e) => {
+        caughtError = e;
+      });
+
+      await vi.advanceTimersByTimeAsync(600);
+      await resultPromise;
+
+      expect(caughtError).toBeInstanceOf(BridgeAttestationTimeoutError);
+    });
+
+    it('should use default polling interval and max wait time', async () => {
+      const fetchMock = vi.fn().mockResolvedValue({
+        ok: true,
+        json: () => Promise.resolve({
+          messages: [{
+            status: 'complete',
+            attestation: mockAttestation,
+          }],
+        }),
+      });
+      vi.stubGlobal('fetch', fetchMock);
+
+      const client = new AttestationClient();
+      const result = await client.waitForFastAttestation(0, mockTxHash);
+
+      expect(result.attestation).toBe(mockAttestation);
+    });
+  });
+
+  describe('getEstimatedTime extended', () => {
+    it('should return fast estimated time string', () => {
+      const client = new AttestationClient();
+      const time = client.getEstimatedTime(true);
+
+      expect(time).toContain('second');
+      expect(time).toContain('10');
+      expect(time).toContain('30');
+    });
+  });
 });

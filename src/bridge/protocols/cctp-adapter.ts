@@ -22,6 +22,8 @@ import { BaseBridgeAdapter, type BaseAdapterConfig } from './base-adapter.js';
 export interface CCTPAdapterConfig extends BaseAdapterConfig {
   /** Use testnet (auto-detected from chain ID if not specified) */
   testnet?: boolean;
+  /** Enable fast CCTP mode (v2 API - seconds instead of minutes) */
+  fast?: boolean;
   /** Custom attestation client config */
   attestationConfig?: CCTPBridgeConfig['attestationConfig'];
 }
@@ -30,28 +32,45 @@ export interface CCTPAdapterConfig extends BaseAdapterConfig {
  * CCTP Adapter - Implements BridgeProtocolV2 by wrapping CCTPBridge
  */
 export class CCTPAdapter extends BaseBridgeAdapter {
-  readonly info: BridgeProtocolInfo = {
-    name: 'CCTP',
-    displayName: 'Circle CCTP',
-    supportedTokens: ['USDC'] as const,
-    finalityModel: 'attestation',
-    typicalSpeed: 'standard',
-    estimatedTimeSeconds: { min: 600, max: 1800 }, // 10-30 minutes
-    hasProtocolFees: false,
-  };
+  readonly info: BridgeProtocolInfo;
 
   private readonly cctpBridge: CCTPBridge;
+  private readonly fastMode: boolean;
 
   constructor(config: CCTPAdapterConfig) {
     super(config);
+
+    this.fastMode = config.fast ?? false;
+
+    // Set estimated time based on fast mode
+    this.info = {
+      name: 'CCTP',
+      displayName: this.fastMode ? 'Circle CCTP (Fast)' : 'Circle CCTP',
+      supportedTokens: ['USDC'] as const,
+      finalityModel: 'attestation',
+      typicalSpeed: this.fastMode ? 'fast' : 'standard',
+      // Fast mode: 10-30 seconds, Standard: 10-30 minutes
+      estimatedTimeSeconds: this.fastMode
+        ? { min: 10, max: 30 }
+        : { min: 600, max: 1800 },
+      hasProtocolFees: this.fastMode, // Fast mode has a small fee
+    };
 
     // Create the underlying CCTP bridge
     this.cctpBridge = new CCTPBridge({
       sourceRpc: config.sourceRpc,
       account: config.account,
       testnet: config.testnet,
+      fast: config.fast,
       attestationConfig: config.attestationConfig,
     });
+  }
+
+  /**
+   * Check if fast mode is enabled
+   */
+  isFastMode(): boolean {
+    return this.fastMode;
   }
 
   /**

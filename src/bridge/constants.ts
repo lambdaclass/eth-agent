@@ -10,14 +10,18 @@ import type { CCTPDomain } from './types.js';
  * CCTP contract configuration per chain
  */
 export interface CCTPChainConfig {
-  /** TokenMessenger contract address */
+  /** TokenMessenger contract address (v1) */
   tokenMessenger: Address;
-  /** MessageTransmitter contract address */
+  /** MessageTransmitter contract address (v1) */
   messageTransmitter: Address;
   /** Circle's CCTP domain ID for this chain */
   domain: CCTPDomain;
   /** USDC token address on this chain */
   usdc: Address;
+  /** TokenMessengerV2 contract address (for fast transfers) */
+  tokenMessengerV2?: Address;
+  /** MessageTransmitterV2 contract address (for fast transfers) */
+  messageTransmitterV2?: Address;
 }
 
 /**
@@ -76,6 +80,9 @@ export const CCTP_CONTRACTS: Record<number, CCTPChainConfig> = {
     messageTransmitter: '0x7865fAfC2db2093669d92c0F33AeEF291086BEFD' as Address,
     domain: 0,
     usdc: '0x1c7D4B196Cb0C7B01d743Fbc6116a902379C7238' as Address,
+    // V2 contracts for fast transfers
+    tokenMessengerV2: '0x8FE6B999Dc680CcFDD5Bf7EB0974218be2542DAA' as Address,
+    messageTransmitterV2: '0xE737e5cEBEEBa77EFE34D4aa090756590b1CE275' as Address,
   },
   // Avalanche Fuji
   43113: {
@@ -104,6 +111,9 @@ export const CCTP_CONTRACTS: Record<number, CCTPChainConfig> = {
     messageTransmitter: '0x7865fAfC2db2093669d92c0F33AeEF291086BEFD' as Address,
     domain: 6,
     usdc: '0x036CbD53842c5426634e7929541eC2318f3dCF7e' as Address,
+    // V2 contracts for fast transfers
+    tokenMessengerV2: '0x8FE6B999Dc680CcFDD5Bf7EB0974218be2542DAA' as Address,
+    messageTransmitterV2: '0xE737e5cEBEEBa77EFE34D4aa090756590b1CE275' as Address,
   },
   // Polygon Amoy
   80002: {
@@ -118,11 +128,45 @@ export const CCTP_CONTRACTS: Record<number, CCTPChainConfig> = {
  * Circle's attestation API endpoints
  */
 export const CIRCLE_ATTESTATION_API = {
-  /** Mainnet attestation service */
+  /** Mainnet attestation service (v1 - standard, 15-30 min) */
   mainnet: 'https://iris-api.circle.com/v1/attestations',
-  /** Testnet attestation service */
+  /** Testnet attestation service (v1 - standard) */
   testnet: 'https://iris-api-sandbox.circle.com/v1/attestations',
 } as const;
+
+/**
+ * Circle's Fast CCTP API endpoints (v2 - seconds instead of minutes)
+ * Uses source domain + tx hash lookup instead of message hash
+ */
+export const CIRCLE_FAST_ATTESTATION_API = {
+  /** Mainnet fast attestation service */
+  mainnet: 'https://iris-api.circle.com/v2/messages',
+  /** Testnet fast attestation service */
+  testnet: 'https://iris-api-sandbox.circle.com/v2/messages',
+} as const;
+
+/**
+ * Circle's CCTP fee API endpoints (for fast transfer fee quotes)
+ */
+export const CIRCLE_FEE_API = {
+  /** Mainnet fee API */
+  mainnet: 'https://iris-api.circle.com/v2/burn/USDC/fees',
+  /** Testnet fee API */
+  testnet: 'https://iris-api-sandbox.circle.com/v2/burn/USDC/fees',
+} as const;
+
+/**
+ * CCTP v2 finality thresholds
+ * These determine when Circle will sign the attestation
+ */
+export const CCTP_FINALITY_THRESHOLDS = {
+  /** Confirmed finality - for fast transfers (soft finality, ~seconds) */
+  confirmed: 1000,
+  /** Finalized finality - for standard transfers (hard finality, ~15-30 min) */
+  finalized: 2000,
+} as const;
+
+export type CCTPFinalityThreshold = typeof CCTP_FINALITY_THRESHOLDS[keyof typeof CCTP_FINALITY_THRESHOLDS];
 
 /**
  * Get CCTP config for a chain

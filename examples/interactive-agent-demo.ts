@@ -38,6 +38,12 @@ const CONFIG = {
   // Claude model to use
   model: 'claude-sonnet-4-20250514' as const,
 
+  // Bridge configuration
+  bridge: {
+    // Enable fast CCTP mode (v2 API - seconds instead of 15-30 minutes)
+    fast: process.env.FAST_BRIDGE === 'true' || true, // Default to fast mode
+  },
+
   // Safety limits for the demo (conservative for safety)
   limits: {
     perTransaction: '0.1 ETH',
@@ -58,6 +64,17 @@ const CONFIG = {
       perDayUSD: 500,
     },
   },
+
+  // Default destination chain RPCs for verifying bridged tokens
+  // These enable on-chain completion checking for bridge status
+  destinationRpcs: {
+    84532: process.env.BASE_SEPOLIA_RPC_URL ?? 'https://sepolia.base.org', // Base Sepolia
+    11155420: process.env.OP_SEPOLIA_RPC_URL ?? 'https://sepolia.optimism.io', // OP Sepolia
+    421614: process.env.ARB_SEPOLIA_RPC_URL ?? 'https://sepolia-rollup.arbitrum.io/rpc', // Arbitrum Sepolia
+    8453: process.env.BASE_RPC_URL ?? 'https://mainnet.base.org', // Base
+    10: process.env.OP_RPC_URL ?? 'https://mainnet.optimism.io', // Optimism
+    42161: process.env.ARB_RPC_URL ?? 'https://arb1.arbitrum.io/rpc', // Arbitrum
+  } as Record<number, string>,
 };
 
 // ============================================================================
@@ -106,9 +123,11 @@ ${colors.cyan}==================================================================
 function printWalletInfo(wallet: AgentWallet): void {
   const caps = wallet.getCapabilities();
   const chainName = getChainName(caps.network.chainId);
+  const fastBridge = wallet.isFastBridgeEnabled();
   console.log(`${colors.blue}Wallet Info${colors.reset}`);
   console.log(`  Address: ${colors.cyan}${caps.address}${colors.reset}`);
   console.log(`  Network: ${colors.yellow}${chainName} (Chain ${caps.network.chainId})${colors.reset}`);
+  console.log(`  Bridge:  ${fastBridge ? `${colors.green}Fast CCTP (v2)${colors.reset}` : `${colors.dim}Standard CCTP${colors.reset}`}`);
 }
 
 function printLimits(wallet: AgentWallet): void {
@@ -149,7 +168,8 @@ function printExamples(): void {
   console.log(`  ${colors.dim}"Get a quote to swap 0.01 ETH for USDC"${colors.reset}`);
   console.log(`  ${colors.dim}"Swap 10 USDC for ETH"${colors.reset}`);
   console.log(`  ${colors.dim}"Compare bridge routes for 50 USDC to Arbitrum"${colors.reset}`);
-  console.log(`  ${colors.dim}"Bridge 25 USDC to Base"${colors.reset}`);
+  console.log(`  ${colors.dim}"Bridge 25 USDC to Base Sepolia"${colors.reset}`);
+  console.log(`  ${colors.dim}"Check my USDC balance on Base Sepolia"${colors.reset}`);
   console.log(`  ${colors.dim}"Preview sending 0.01 ETH to vitalik.eth"${colors.reset}`);
   console.log(`  ${colors.dim}"What are my current spending limits?"${colors.reset}`);
   console.log(`\n${colors.dim}Type 'quit' or 'exit' to end the session.${colors.reset}\n`);
@@ -222,6 +242,7 @@ async function runAgentLoop(
 ): Promise<void> {
   const conversationHistory: Anthropic.MessageParam[] = [];
 
+  const fastMode = wallet.isFastBridgeEnabled();
   const systemPrompt = `You are an AI assistant with access to an Ethereum wallet. You can help users:
 
 1. **Check balances** - ETH, stablecoins (USDC, USDT, DAI), and other tokens
@@ -229,12 +250,30 @@ async function runAgentLoop(
 3. **Swap tokens** - Exchange tokens using Uniswap V3 (e.g., ETH <-> USDC)
 4. **Bridge tokens** - Move stablecoins across chains (Ethereum, Arbitrum, Base, Optimism, etc.)
 5. **Preview operations** - Simulate transactions before executing to see costs and potential issues
+6. **Verify bridged tokens** - Check if tokens have arrived on the destination chain after bridging
 
 **Important Safety Notes:**
 - Always preview or quote operations before executing them when the user hasn't explicitly asked to execute
 - Spending limits are enforced - check limits if a transaction fails
 - For swaps and bridges, explain the fees and expected outcomes
 - When bridging, explain the estimated time and process
+
+**Bridge Mode:** ${fastMode ? 'Fast CCTP (v2) - attestations in ~10-30 seconds' : 'Standard CCTP - attestations in ~15-30 minutes'}
+${fastMode ? '- Fast mode uses optimistic finality with a small fee (~0.1% or less)' : ''}
+
+**IMPORTANT - Complete Bridge Flow (Fast Mode):**
+Bridging requires 3 steps to fully complete:
+1. **eth_bridge** → Burns tokens on source chain, returns trackingId and sourceTxHash
+2. **eth_waitForFastBridgeAttestation(sourceTxHash)** → Gets attestation (~10-30 seconds), returns attestation and message
+3. **eth_completeBridge(trackingId, attestation, message)** → Mints tokens on destination chain
+
+The tokens will NOT appear on the destination chain until step 3 is executed!
+After step 3 completes, use eth_getStablecoinBalanceOnChain to verify the tokens arrived.
+
+**Bridge Verification:**
+After completing all 3 steps, verify tokens arrived by:
+1. Using eth_getBridgeStatus to check the bridge progress (should reach 100% when complete)
+2. Using eth_getStablecoinBalanceOnChain to check the actual balance on the destination chain
 
 **Current Network:** ${getChainName(wallet.getCapabilities().network.chainId)} (Chain ${wallet.getCapabilities().network.chainId})
 **Wallet Address:** ${wallet.address}
@@ -299,7 +338,9 @@ Be helpful, concise, and always prioritize safety. If an operation seems risky o
           toolResults.push({
             type: 'tool_result',
             tool_use_id: toolUse.id,
-            content: JSON.stringify(result),
+            content: JSON.stringify(result, (_, v) =>
+              typeof v === 'bigint' ? v.toString() : v
+            ),
           });
         }
 
@@ -370,8 +411,15 @@ async function main(): Promise<void> {
     privateKey: process.env.ETH_PRIVATE_KEY,
     rpcUrl: CONFIG.rpcUrl,
     limits: CONFIG.limits,
+    bridge: CONFIG.bridge,
     onApprovalRequired: createApprovalHandler(rl),
   });
+
+  // Register destination chain RPCs for bridge completion verification
+  // This enables checking if bridged tokens actually arrived on the destination chain
+  for (const [chainId, rpcUrl] of Object.entries(CONFIG.destinationRpcs)) {
+    await wallet.registerDestinationRpc(parseInt(chainId), rpcUrl);
+  }
 
   const tools = anthropicTools(wallet);
 

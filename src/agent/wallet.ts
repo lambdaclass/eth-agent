@@ -44,8 +44,6 @@ import {
   parseTokenAmount,
   formatTokenAmount,
   isNativeETH,
-  getTokenBySymbol,
-  getTokenAddress,
 } from '../tokens/index.js';
 import {
   UniswapClient,
@@ -96,6 +94,12 @@ export interface AgentWalletConfig {
 
   // Agent identification
   agentId?: string;
+
+  // Bridge configuration
+  bridge?: {
+    /** Enable fast CCTP mode (v2 API - seconds instead of 15-30 minutes) */
+    fast?: boolean;
+  };
 }
 
 export interface SendOptions {
@@ -314,6 +318,7 @@ export class AgentWallet {
   private uniswapClient: UniswapClient | null = null;
   private cachedBridge?: CCTPBridge;
   private cachedBridgeRouter?: BridgeRouter;
+  private readonly bridgeConfig: { fast: boolean };
   private cachedChainId?: number;
 
   // ETH price cache for USD value estimation
@@ -329,6 +334,7 @@ export class AgentWallet {
     trustedAddresses: Map<string, string>;
     blockedAddresses: Map<string, string>;
     agentId: string;
+    bridgeConfig: { fast: boolean };
   }>) {
     this.account = config.account;
     this.address = config.account.address;
@@ -343,6 +349,7 @@ export class AgentWallet {
     this.trustedAddresses = config.trustedAddresses;
     this.blockedAddresses = config.blockedAddresses;
     this.agentId = config.agentId;
+    this.bridgeConfig = config.bridgeConfig;
   }
 
   /**
@@ -411,6 +418,9 @@ export class AgentWallet {
       trustedAddresses,
       blockedAddresses,
       agentId: config.agentId ?? 'agent',
+      bridgeConfig: {
+        fast: config.bridge?.fast ?? false,
+      },
     });
   }
 
@@ -968,10 +978,18 @@ export class AgentWallet {
       this.cachedBridge = new CCTPBridge({
         sourceRpc: this.rpc,
         account: this.account,
+        fast: this.bridgeConfig.fast,
         // Let it auto-detect testnet from chain ID
       });
     }
     return this.cachedBridge;
+  }
+
+  /**
+   * Check if fast CCTP bridge mode is enabled
+   */
+  isFastBridgeEnabled(): boolean {
+    return this.bridgeConfig.fast;
   }
 
   /**
@@ -1085,13 +1103,100 @@ export class AgentWallet {
 
   /**
    * Wait for bridge attestation to be ready
-   * This can take 15-30 minutes on mainnet
+   * This can take 15-30 minutes on mainnet (or seconds if fast mode is enabled)
    *
    * @returns The attestation signature needed to complete the bridge
    */
   async waitForBridgeAttestation(messageHash: Hex): Promise<Hex> {
     const bridge = await this.getBridge();
     return bridge.waitForAttestation(messageHash);
+  }
+
+  /**
+   * Wait for fast bridge attestation using the v2 API
+   * This typically takes 10-30 seconds instead of 15-30 minutes
+   *
+   * @param burnTxHash - Transaction hash from the bridge burn operation
+   * @returns Attestation data including the signature
+   */
+  async waitForFastBridgeAttestation(burnTxHash: Hash): Promise<{ attestation: Hex; message?: Hex; messageHash?: Hex }> {
+    const bridge = await this.getBridge();
+    return bridge.waitForFastAttestation(burnTxHash);
+  }
+
+  /**
+   * Check if fast bridge attestation is ready (non-blocking)
+   *
+   * @param burnTxHash - Transaction hash from the bridge burn operation
+   * @returns true if attestation is ready
+   */
+  async isFastBridgeAttestationReady(burnTxHash: Hash): Promise<boolean> {
+    const bridge = await this.getBridge();
+    return bridge.isFastAttestationReady(burnTxHash);
+  }
+
+  /**
+   * Complete a bridge on the destination chain
+   *
+   * After getting an attestation (via waitForFastBridgeAttestation or waitForBridgeAttestation),
+   * this method calls receiveMessage() on the destination chain to mint the USDC.
+   *
+   * IMPORTANT: A destination RPC must be registered first using registerDestinationRpc().
+   *
+   * @param options - Completion options from the bridge result
+   * @returns Completion result including mint transaction hash
+   *
+   * @example
+   * ```typescript
+   * // Step 1: Initiate bridge
+   * const result = await wallet.bridge({
+   *   token: USDC,
+   *   amount: '100',
+   *   destinationChainId: 84532,
+   * });
+   *
+   * // Step 2: Wait for attestation (fast mode)
+   * const attestation = await wallet.waitForFastBridgeAttestation(result.sourceTxHash);
+   *
+   * // Step 3: Complete bridge on destination chain
+   * const completion = await wallet.completeBridge({
+   *   trackingId: result.trackingId,
+   *   attestation: attestation.attestation,
+   *   messageBytes: result.protocolData.messageBytes,
+   * });
+   *
+   * console.log('USDC minted on destination:', completion.mintTxHash);
+   * ```
+   */
+  async completeBridge(options: {
+    trackingId: string;
+    attestation: Hex;
+    messageBytes: Hex;
+  }): Promise<{
+    success: boolean;
+    mintTxHash: Hash;
+    amount: { raw: bigint; formatted: string };
+    recipient: string;
+  }> {
+    const router = await this.getBridgeRouter();
+    return router.completeBridge(options);
+  }
+
+  /**
+   * Get fast transfer fee quote for a destination chain
+   *
+   * @param destinationChainId - Target chain ID
+   * @param amount - Optional amount to calculate max fee
+   * @returns Fee information
+   */
+  async getFastBridgeFee(destinationChainId: number, amount?: bigint): Promise<{
+    feePercentage: number;
+    feeBasisPoints: number;
+    maxFee?: bigint;
+    maxFeeFormatted?: string;
+  }> {
+    const bridge = await this.getBridge();
+    return bridge.getFastTransferFee(destinationChainId, amount);
   }
 
   /**
@@ -1140,6 +1245,7 @@ export class AgentWallet {
         sourceRpc: this.rpc,
         account: this.account,
         limitsEngine: this.limits,
+        fast: this.bridgeConfig.fast,
       });
     }
     return this.cachedBridgeRouter;
@@ -1372,6 +1478,34 @@ export class AgentWallet {
   ): Promise<Hex> {
     const router = await this.getBridgeRouter();
     return router.waitForCompletionByTrackingId(trackingId, options);
+  }
+
+  /**
+   * Register an RPC client for a destination chain
+   *
+   * This enables on-chain completion checking for bridges to that chain.
+   * When registered, getBridgeStatusByTrackingId() can verify if a bridge
+   * has actually completed on the destination chain, not just that the
+   * attestation is ready.
+   *
+   * @param chainId - The destination chain ID
+   * @param rpcUrl - The RPC URL for that chain
+   *
+   * @example
+   * ```typescript
+   * // Enable completion checking for Base
+   * wallet.registerDestinationRpc(8453, 'https://mainnet.base.org');
+   *
+   * // Now status checks can verify on-chain completion
+   * const status = await wallet.getBridgeStatusByTrackingId(trackingId);
+   * // status.status will be 'completed' if nonce is used on Base
+   * ```
+   */
+  async registerDestinationRpc(chainId: number, rpcUrl: string): Promise<void> {
+    const { RPCClient } = await import('../protocol/rpc.js');
+    const destRpc = new RPCClient({ url: rpcUrl });
+    const router = await this.getBridgeRouter();
+    router.registerDestinationRpc(chainId, destRpc);
   }
 
   /**
@@ -2104,9 +2238,8 @@ export class AgentWallet {
       return this.cachedETHPrice.value;
     }
 
-    // Get USDC address for this chain
-    const usdcToken = getTokenBySymbol('USDC');
-    const usdcAddress = usdcToken ? getTokenAddress(usdcToken, chainId) : undefined;
+    // Get USDC address for this chain (USDC is a stablecoin, not in regular tokens)
+    const usdcAddress = getStablecoinAddress(USDC, chainId);
     const wethAddress = WETH_ADDRESSES[chainId];
 
     // Fail explicitly if USDC or WETH not available on this chain

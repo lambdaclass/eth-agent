@@ -25,6 +25,7 @@ export const USDC: StablecoinInfo = {
     43114: '0xB97EF9Ef8734C71904D8002F8b6Bc66Dd9c48a6E',   // Avalanche
     56: '0x8AC76a51cc950d9822D68b83fE1Ad97B32Cd580d',      // BNB Chain
     11155111: '0x1c7D4B196Cb0C7B01d743Fbc6116a902379C7238', // Sepolia
+    84532: '0x036CbD53842c5426634e7929541eC2318f3dCF7e',    // Base Sepolia
   },
 };
 

@@ -4,8 +4,9 @@
  */
 
 import type { AgentWallet } from '../agent/index.js';
-import type { Address } from '../core/types.js';
-import { STABLECOINS, type StablecoinInfo } from '../stablecoins/tokens.js';
+import type { Address, Hash, Hex } from '../core/types.js';
+import { STABLECOINS, type StablecoinInfo, getStablecoinAddress } from '../stablecoins/tokens.js';
+import { RPCClient } from '../protocol/rpc.js';
 
 /**
  * Resolve stablecoin by symbol
@@ -32,6 +33,26 @@ const SUPPORTED_CHAINS: Record<number, string> = {
   421614: 'Arbitrum Sepolia',
   80002: 'Polygon Amoy',
   43113: 'Avalanche Fuji',
+};
+
+/**
+ * Default public RPC URLs for supported chains
+ * Used for verifying bridged tokens on destination chains
+ */
+const DEFAULT_RPC_URLS: Record<number, string> = {
+  1: 'https://eth.llamarpc.com',
+  10: 'https://mainnet.optimism.io',
+  137: 'https://polygon-rpc.com',
+  8453: 'https://mainnet.base.org',
+  42161: 'https://arb1.arbitrum.io/rpc',
+  43114: 'https://api.avax.network/ext/bc/C/rpc',
+  // Testnets
+  11155111: 'https://ethereum-sepolia-rpc.publicnode.com',
+  11155420: 'https://sepolia.optimism.io',
+  84532: 'https://sepolia.base.org',
+  421614: 'https://sepolia-rollup.arbitrum.io/rpc',
+  80002: 'https://rpc-amoy.polygon.technology',
+  43113: 'https://api.avax-test.network/ext/bc/C/rpc',
 };
 
 export interface ToolDefinition {
@@ -929,6 +950,176 @@ Returns a tracking ID to monitor bridge progress.`,
     },
 
     {
+      name: 'eth_waitForFastBridgeAttestation',
+      description: `Wait for fast CCTP attestation using the burn transaction hash.
+This is much faster than standard attestation (10-30 seconds vs 15-30 minutes).
+
+Use this when fast bridge mode is enabled. Pass the burn transaction hash from the bridge result.
+
+Example: After bridging, use the burnTxHash to wait for the fast attestation.`,
+      parameters: {
+        type: 'object',
+        properties: {
+          burnTxHash: {
+            type: 'string',
+            description: 'The transaction hash of the bridge burn operation',
+          },
+        },
+        required: ['burnTxHash'],
+      },
+      handler: async (params) => {
+        try {
+          const burnTxHash = params['burnTxHash'] as Hash;
+          const result = await wallet.waitForFastBridgeAttestation(burnTxHash);
+
+          return {
+            success: true,
+            data: result,
+            summary: `Fast attestation ready! Attestation received for tx ${burnTxHash.slice(0, 10)}...`,
+          };
+        } catch (err) {
+          return {
+            success: false,
+            error: (err as Error).message,
+            summary: `Failed to get fast attestation: ${(err as Error).message}`,
+          };
+        }
+      },
+      metadata: {
+        category: 'read',
+        requiresApproval: false,
+        riskLevel: 'none',
+      },
+    },
+
+    {
+      name: 'eth_completeBridge',
+      description: `Complete a bridge operation by minting tokens on the destination chain.
+
+After a bridge is initiated and attestation is received, this tool calls receiveMessage()
+on the destination chain's MessageTransmitter to mint the bridged tokens.
+
+IMPORTANT: This is required to complete the bridge! The tokens won't appear on the
+destination chain until this step is executed.
+
+Flow:
+1. eth_bridge → Burns tokens on source, returns trackingId and sourceTxHash
+2. eth_waitForFastBridgeAttestation → Gets attestation (includes message bytes)
+3. eth_completeBridge → Mints tokens on destination using attestation
+
+The message bytes come from the attestation result (attestation.message field).`,
+      parameters: {
+        type: 'object',
+        properties: {
+          trackingId: {
+            type: 'string',
+            description: 'The tracking ID returned from eth_bridge',
+          },
+          attestation: {
+            type: 'string',
+            description: 'The attestation signature from eth_waitForFastBridgeAttestation',
+          },
+          messageBytes: {
+            type: 'string',
+            description: 'The message bytes from the attestation result (attestation.message field)',
+          },
+        },
+        required: ['trackingId', 'attestation', 'messageBytes'],
+      },
+      handler: async (params) => {
+        try {
+          const result = await wallet.completeBridge({
+            trackingId: params['trackingId'] as string,
+            attestation: params['attestation'] as Hex,
+            messageBytes: params['messageBytes'] as Hex,
+          });
+
+          return {
+            success: result.success,
+            data: {
+              mintTxHash: result.mintTxHash,
+              amount: result.amount,
+              recipient: result.recipient,
+            },
+            summary: `Bridge completed! Minted ${result.amount.formatted} USDC to ${result.recipient}. TX: ${result.mintTxHash.slice(0, 10)}...`,
+          };
+        } catch (err) {
+          return {
+            success: false,
+            error: (err as Error).message,
+            summary: `Failed to complete bridge: ${(err as Error).message}`,
+          };
+        }
+      },
+      metadata: {
+        category: 'write',
+        requiresApproval: true,
+        riskLevel: 'medium',
+      },
+    },
+
+    {
+      name: 'eth_getFastBridgeFee',
+      description: `Get the fee for fast CCTP transfers to a destination chain.
+Fast transfers use optimistic finality and require a small fee (typically ~0.1% or less).
+
+Use this to preview the fee before initiating a fast bridge transfer.`,
+      parameters: {
+        type: 'object',
+        properties: {
+          destinationChainId: {
+            type: 'number',
+            description: 'The destination chain ID',
+          },
+          amount: {
+            type: 'string',
+            description: 'Optional: Amount in USDC to calculate the max fee (e.g., "100")',
+          },
+        },
+        required: ['destinationChainId'],
+      },
+      handler: async (params) => {
+        try {
+          const destChainId = params['destinationChainId'] as number;
+          const amountStr = params['amount'] as string | undefined;
+
+          // Convert amount to raw if provided (USDC has 6 decimals)
+          let amount: bigint | undefined;
+          if (amountStr) {
+            const [whole, fraction = ''] = amountStr.split('.');
+            const paddedFraction = fraction.padEnd(6, '0').slice(0, 6);
+            amount = BigInt(whole + paddedFraction);
+          }
+
+          const fee = await wallet.getFastBridgeFee(destChainId, amount);
+          const destChainName = SUPPORTED_CHAINS[destChainId] || `Chain ${destChainId}`;
+
+          let summary = `Fast bridge fee to ${destChainName}: ${fee.feePercentage * 100}%`;
+          if (fee.maxFeeFormatted) {
+            summary += ` (max fee: ${fee.maxFeeFormatted} USDC)`;
+          }
+
+          return {
+            success: true,
+            data: fee,
+            summary,
+          };
+        } catch (err) {
+          return {
+            success: false,
+            error: (err as Error).message,
+            summary: `Failed to get fast bridge fee: ${(err as Error).message}`,
+          };
+        }
+      },
+      metadata: {
+        category: 'info',
+        requiresApproval: false,
+        riskLevel: 'none',
+      },
+    },
+
+    {
       name: 'eth_getBridgeLimits',
       description: 'Get current bridge spending limits and allowed destination chains.',
       parameters: {
@@ -959,6 +1150,121 @@ Returns a tracking ID to monitor bridge progress.`,
       },
       metadata: {
         category: 'info',
+        requiresApproval: false,
+        riskLevel: 'none',
+      },
+    },
+
+    {
+      name: 'eth_getStablecoinBalanceOnChain',
+      description: `Check stablecoin balance on a different chain. Use this to verify bridged tokens arrived on the destination chain.
+
+Example usage:
+- Check USDC balance on Base Sepolia after bridging from Sepolia
+- Verify tokens arrived on Arbitrum after bridge completes
+
+This tool connects to the destination chain's RPC to check the actual on-chain balance.`,
+      parameters: {
+        type: 'object',
+        properties: {
+          token: {
+            type: 'string',
+            description: 'Stablecoin symbol: USDC, USDT, USDS, DAI, PYUSD, or FRAX',
+            enum: ['USDC', 'USDT', 'USDS', 'DAI', 'PYUSD', 'FRAX'],
+          },
+          chainId: {
+            type: 'number',
+            description: 'Chain ID to check balance on (e.g., 84532 for Base Sepolia, 8453 for Base)',
+          },
+          address: {
+            type: 'string',
+            description: 'Address to check. Leave empty for wallet address.',
+          },
+          rpcUrl: {
+            type: 'string',
+            description: 'Optional custom RPC URL. Uses default public RPC if not provided.',
+          },
+        },
+        required: ['token', 'chainId'],
+      },
+      handler: async (params) => {
+        try {
+          const stablecoin = resolveStablecoin(params['token'] as string);
+          if (!stablecoin) {
+            const tokenName = String(params['token']);
+            return {
+              success: false,
+              error: `Unknown stablecoin: ${tokenName}`,
+              summary: `Unknown stablecoin: ${tokenName}`,
+            };
+          }
+
+          const chainId = params['chainId'] as number;
+          const chainName = SUPPORTED_CHAINS[chainId] || `Chain ${chainId}`;
+
+          // Get the stablecoin address on the destination chain
+          const tokenAddress = getStablecoinAddress(stablecoin, chainId);
+          if (!tokenAddress) {
+            return {
+              success: false,
+              error: `${stablecoin.symbol} not supported on ${chainName}`,
+              summary: `${stablecoin.symbol} not available on ${chainName}`,
+            };
+          }
+
+          // Get RPC URL (custom or default)
+          const rpcUrl = (params['rpcUrl'] as string) || DEFAULT_RPC_URLS[chainId];
+          if (!rpcUrl) {
+            return {
+              success: false,
+              error: `No RPC URL available for ${chainName}. Please provide a custom rpcUrl.`,
+              summary: `No RPC for ${chainName}`,
+            };
+          }
+
+          // Create RPC client for destination chain
+          const rpc = new RPCClient(rpcUrl);
+
+          // Get address to check (default to wallet address)
+          const addressToCheck = (params['address'] as string) || wallet.address;
+
+          // Call balanceOf on the token contract
+          const balanceData = await rpc.call({
+            to: tokenAddress as Address,
+            data: `0x70a08231000000000000000000000000${addressToCheck.slice(2).toLowerCase()}` as Hex,
+          });
+
+          const rawBalance = BigInt(balanceData || '0x0');
+          const decimals = stablecoin.decimals;
+          const divisor = BigInt(10 ** decimals);
+          const whole = rawBalance / divisor;
+          const fraction = rawBalance % divisor;
+          const formatted = `${whole}.${fraction.toString().padStart(decimals, '0').slice(0, 2)}`;
+
+          return {
+            success: true,
+            data: {
+              symbol: stablecoin.symbol,
+              chain: chainName,
+              chainId,
+              address: addressToCheck,
+              tokenAddress,
+              raw: rawBalance.toString(),
+              formatted,
+              decimals,
+            },
+            summary: `${stablecoin.symbol} balance on ${chainName}: ${formatted} ${stablecoin.symbol}`,
+          };
+        } catch (err) {
+          return {
+            success: false,
+            error: (err as Error).message,
+            summary: `Failed to get balance: ${(err as Error).message}`,
+          };
+        }
+      },
+      metadata: {
+        category: 'read',
         requiresApproval: false,
         riskLevel: 'none',
       },
