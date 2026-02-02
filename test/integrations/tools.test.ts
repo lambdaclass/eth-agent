@@ -58,8 +58,8 @@ describe('Tools', () => {
     });
 
     it('creates the correct number of tools', () => {
-      // 7 core + 3 swap + 3 stablecoin + 8 bridge (incl. fast CCTP tools) = 21 tools
-      expect(tools.length).toBe(21);
+      // 7 core + 3 swap + 3 stablecoin + 9 bridge (incl. fast CCTP tools + getStablecoinBalanceOnChain) = 22 tools
+      expect(tools.length).toBe(22);
     });
 
     it('tools have correct metadata structure', () => {
