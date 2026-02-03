@@ -456,4 +456,248 @@ describe('ABI', () => {
       expect(() => encodeParameters(['int7'], [1n])).toThrow('Invalid int size');
     });
   });
+
+  describe('tuple encoding', () => {
+    it('encodes simple static tuple', () => {
+      // Tuple of (address, uint256, bool)
+      const encoded = encodeParameters(
+        ['(address,uint256,bool)'],
+        [['0xd8dA6BF26964aF9D7eEd9e03E53415D37aA96045', 1000n, true]]
+      );
+
+      // Static tuple is encoded inline (no offset pointer)
+      // address: 32 bytes, uint256: 32 bytes, bool: 32 bytes
+      expect(encoded.length).toBe(2 + 32 * 3 * 2); // 0x + 3 * 32 bytes in hex
+    });
+
+    it('decodes simple static tuple', () => {
+      const encoded = encodeParameters(
+        ['(address,uint256,bool)'],
+        [['0xd8dA6BF26964aF9D7eEd9e03E53415D37aA96045', 1000n, true]]
+      );
+
+      const decoded = decodeParameters(['(address,uint256,bool)'], encoded);
+      expect(decoded[0]).toEqual([
+        '0xd8da6bf26964af9d7eed9e03e53415d37aa96045',
+        1000n,
+        true,
+      ]);
+    });
+
+    it('encodes tuple with dynamic component (string)', () => {
+      // Tuple of (address, string, uint256) - dynamic because of string
+      const encoded = encodeParameters(
+        ['(address,string,uint256)'],
+        [['0xd8dA6BF26964aF9D7eEd9e03E53415D37aA96045', 'hello', 42n]]
+      );
+
+      // Should be longer due to dynamic encoding
+      expect(encoded.length).toBeGreaterThan(2 + 32 * 3 * 2);
+    });
+
+    it('decodes tuple with dynamic component', () => {
+      const encoded = encodeParameters(
+        ['(address,string,uint256)'],
+        [['0xd8dA6BF26964aF9D7eEd9e03E53415D37aA96045', 'hello world', 42n]]
+      );
+
+      const decoded = decodeParameters(['(address,string,uint256)'], encoded);
+      expect(decoded[0]).toEqual([
+        '0xd8da6bf26964af9d7eed9e03e53415d37aa96045',
+        'hello world',
+        42n,
+      ]);
+    });
+
+    it('encodes nested tuple', () => {
+      // Tuple containing another tuple: ((address, uint256), bool)
+      const encoded = encodeParameters(
+        ['((address,uint256),bool)'],
+        [[['0xd8dA6BF26964aF9D7eEd9e03E53415D37aA96045', 100n], true]]
+      );
+
+      expect(encoded).toBeDefined();
+      expect(encoded.startsWith('0x')).toBe(true);
+    });
+
+    it('decodes nested tuple', () => {
+      const encoded = encodeParameters(
+        ['((address,uint256),bool)'],
+        [[['0xd8dA6BF26964aF9D7eEd9e03E53415D37aA96045', 100n], true]]
+      );
+
+      const decoded = decodeParameters(['((address,uint256),bool)'], encoded);
+      expect(decoded[0]).toEqual([
+        ['0xd8da6bf26964af9d7eed9e03e53415d37aa96045', 100n],
+        true,
+      ]);
+    });
+
+    it('encodes tuple array', () => {
+      // Array of tuples: (address, uint256)[]
+      const encoded = encodeParameters(
+        ['(address,uint256)[]'],
+        [[
+          ['0xd8dA6BF26964aF9D7eEd9e03E53415D37aA96045', 100n],
+          ['0x0000000000000000000000000000000000000001', 200n],
+        ]]
+      );
+
+      expect(encoded).toBeDefined();
+    });
+
+    it('decodes tuple array', () => {
+      const encoded = encodeParameters(
+        ['(address,uint256)[]'],
+        [[
+          ['0xd8dA6BF26964aF9D7eEd9e03E53415D37aA96045', 100n],
+          ['0x0000000000000000000000000000000000000001', 200n],
+        ]]
+      );
+
+      const decoded = decodeParameters(['(address,uint256)[]'], encoded);
+      expect(decoded[0]).toEqual([
+        ['0xd8da6bf26964af9d7eed9e03e53415d37aa96045', 100n],
+        ['0x0000000000000000000000000000000000000001', 200n],
+      ]);
+    });
+
+    it('encodes fixed-size tuple array', () => {
+      const encoded = encodeParameters(
+        ['(address,uint256)[2]'],
+        [[
+          ['0xd8dA6BF26964aF9D7eEd9e03E53415D37aA96045', 100n],
+          ['0x0000000000000000000000000000000000000001', 200n],
+        ]]
+      );
+
+      expect(encoded).toBeDefined();
+    });
+
+    it('decodes fixed-size tuple array', () => {
+      const encoded = encodeParameters(
+        ['(address,uint256)[2]'],
+        [[
+          ['0xd8dA6BF26964aF9D7eEd9e03E53415D37aA96045', 100n],
+          ['0x0000000000000000000000000000000000000001', 200n],
+        ]]
+      );
+
+      const decoded = decodeParameters(['(address,uint256)[2]'], encoded);
+      expect(decoded[0]).toEqual([
+        ['0xd8da6bf26964af9d7eed9e03e53415d37aa96045', 100n],
+        ['0x0000000000000000000000000000000000000001', 200n],
+      ]);
+    });
+
+    it('encodes function call with tuple parameter using ABI fragment', () => {
+      // Simulates a function like: submit((address maker, uint256 amount, bool active))
+      const encoded = encodeFunctionCall(
+        {
+          name: 'submit',
+          inputs: [
+            {
+              type: 'tuple',
+              name: 'order',
+              components: [
+                { type: 'address', name: 'maker' },
+                { type: 'uint256', name: 'amount' },
+                { type: 'bool', name: 'active' },
+              ],
+            },
+          ],
+        },
+        [['0xd8dA6BF26964aF9D7eEd9e03E53415D37aA96045', 1000n, true]]
+      );
+
+      // Check function selector is present (4 bytes = 8 hex chars + 0x)
+      expect(encoded.slice(0, 10)).toHaveLength(10);
+    });
+
+    it('encodes function call with tuple array using ABI fragment', () => {
+      const encoded = encodeFunctionCall(
+        {
+          name: 'submitBatch',
+          inputs: [
+            {
+              type: 'tuple[]',
+              name: 'orders',
+              components: [
+                { type: 'address', name: 'maker' },
+                { type: 'uint256', name: 'amount' },
+              ],
+            },
+          ],
+        },
+        [[
+          ['0xd8dA6BF26964aF9D7eEd9e03E53415D37aA96045', 100n],
+          ['0x0000000000000000000000000000000000000001', 200n],
+        ]]
+      );
+
+      expect(encoded).toBeDefined();
+      expect(encoded.startsWith('0x')).toBe(true);
+    });
+
+    it('encodes nested tuple using ABI fragment', () => {
+      const encoded = encodeFunctionCall(
+        {
+          name: 'complexCall',
+          inputs: [
+            {
+              type: 'tuple',
+              name: 'data',
+              components: [
+                {
+                  type: 'tuple',
+                  name: 'inner',
+                  components: [
+                    { type: 'address', name: 'addr' },
+                    { type: 'uint256', name: 'value' },
+                  ],
+                },
+                { type: 'bool', name: 'flag' },
+              ],
+            },
+          ],
+        },
+        [[['0xd8dA6BF26964aF9D7eEd9e03E53415D37aA96045', 500n], false]]
+      );
+
+      expect(encoded).toBeDefined();
+    });
+
+    it('throws on tuple size mismatch', () => {
+      expect(() =>
+        encodeParameters(['(address,uint256,bool)'], [['0xd8dA6BF26964aF9D7eEd9e03E53415D37aA96045', 100n]])
+      ).toThrow('size mismatch');
+    });
+
+    it('throws on invalid tuple value type', () => {
+      expect(() => encodeParameters(['(address,uint256)'], ['not a tuple'])).toThrow(
+        'Expected array or object'
+      );
+    });
+
+    it('roundtrips complex tuple with multiple dynamic fields', () => {
+      const original = [
+        '0xd8dA6BF26964aF9D7eEd9e03E53415D37aA96045',
+        'first string',
+        42n,
+        'second string',
+        true,
+      ];
+
+      const encoded = encodeParameters(['(address,string,uint256,string,bool)'], [original]);
+      const decoded = decodeParameters(['(address,string,uint256,string,bool)'], encoded);
+
+      expect(decoded[0]).toEqual([
+        '0xd8da6bf26964af9d7eed9e03e53415d37aa96045',
+        'first string',
+        42n,
+        'second string',
+        true,
+      ]);
+    });
+  });
 });

@@ -151,6 +151,7 @@ export {
   getFunction,
   getEvent,
 } from './abi.js';
+export type { ABIInput } from './abi.js';
 
 // Result type for explicit error handling
 export {
