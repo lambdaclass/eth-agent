@@ -36,11 +36,22 @@ export function encodeFunctionCall(
 
 /**
  * Decode function call data
+ *
+ * @param signature - Function signature (e.g., "transfer(address,uint256)")
+ * @param data - Hex-encoded calldata (must be at least 10 chars: "0x" + 8 hex chars for selector)
+ * @throws Error if data is too short to contain a valid function selector
  */
 export function decodeFunctionCall(
   signature: string,
   data: Hex
 ): unknown[] {
+  // Validate minimum length: "0x" prefix (2) + 4-byte selector (8 hex chars) = 10 chars
+  if (data.length < 10) {
+    throw new Error(
+      `Invalid calldata: expected at least 10 characters (0x + 4-byte selector), got ${data.length} characters`
+    );
+  }
+
   const paramTypes = parseSignatureTypes(signature);
   // Skip first 4 bytes (function selector)
   const encoded = `0x${data.slice(10)}` as Hex;

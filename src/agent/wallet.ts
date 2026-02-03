@@ -70,6 +70,7 @@ import {
   type UnifiedBridgeStatus,
   type RoutePreference,
 } from '../bridge/index.js';
+import { SlippageOutOfBoundsError } from './errors.js';
 
 export interface AgentWalletConfig {
   // Account (private key or Account object)
@@ -324,6 +325,10 @@ export class AgentWallet {
   // ETH price cache for USD value estimation
   private cachedETHPrice: { value: bigint; timestamp: number } | null = null;
   private readonly ETH_PRICE_CACHE_TTL = 5 * 60 * 1000; // 5 minutes
+
+  // Slippage tolerance bounds
+  private static readonly MIN_SLIPPAGE_PERCENT = 0.01;  // 0.01%
+  private static readonly MAX_SLIPPAGE_PERCENT = 50;     // 50%
 
   private constructor(config: Required<{
     account: Account;
@@ -1704,6 +1709,26 @@ export class AgentWallet {
   // ============ Swap Methods ============
 
   /**
+   * Validate slippage tolerance is within safe bounds
+   *
+   * @param slippage - Slippage tolerance as a percentage (e.g., 0.5 for 0.5%)
+   * @throws SlippageOutOfBoundsError if slippage is outside bounds
+   *
+   * Bounds:
+   * - Minimum: 0.01% (prevents transactions that will always fail)
+   * - Maximum: 50% (prevents extreme sandwich attack vulnerability)
+   */
+  private validateSlippageTolerance(slippage: number): void {
+    if (slippage < AgentWallet.MIN_SLIPPAGE_PERCENT || slippage > AgentWallet.MAX_SLIPPAGE_PERCENT) {
+      throw new SlippageOutOfBoundsError({
+        slippage,
+        min: AgentWallet.MIN_SLIPPAGE_PERCENT,
+        max: AgentWallet.MAX_SLIPPAGE_PERCENT,
+      });
+    }
+  }
+
+  /**
    * Get or create Uniswap client (lazy initialization)
    */
   private async getUniswapClient(): Promise<UniswapClient> {
@@ -1750,6 +1775,10 @@ export class AgentWallet {
   async getSwapQuote(options: SwapOptions): Promise<SwapQuoteResult> {
     const chainId = await this.rpc.getChainId();
 
+    // Validate slippage tolerance if provided
+    const slippage = options.slippageTolerance ?? 0.5;
+    this.validateSlippageTolerance(slippage);
+
     // Resolve tokens
     const fromResolved = resolveToken(options.fromToken, chainId);
     const toResolved = resolveToken(options.toToken, chainId);
@@ -1763,7 +1792,6 @@ export class AgentWallet {
 
     // Parse input amount
     const amountIn = parseTokenAmount(options.amount, fromResolved.token);
-    const slippage = options.slippageTolerance ?? 0.5;
 
     // Check for ETH <-> WETH wrap/unwrap (1:1, no Uniswap needed)
     const isFromETH = isNativeETH(fromResolved.token);
@@ -1919,9 +1947,10 @@ export class AgentWallet {
       0n // We'll check the USD value below
     );
 
-    // 3. Parse amount
+    // 3. Parse amount and validate slippage
     const amountIn = parseTokenAmount(options.amount, fromResolved.token);
     const slippage = options.slippageTolerance ?? this.limits.getMaxSlippagePercent() ?? 0.5;
+    this.validateSlippageTolerance(slippage);
 
     // 4. Handle native ETH - use WETH address for swap routing
     const isFromETH = isNativeETH(fromResolved.token);
@@ -2152,33 +2181,62 @@ export class AgentWallet {
     const uniswap = await this.getUniswapClient();
     const isWrapping = isNativeETH(fromResolved.token); // ETH -> WETH
 
-    // Check balance
+    // Estimate USD value for swap limits (ETH/WETH are equivalent in value)
+    const usdValue = await this.estimateSwapUSDValue(amountIn, fromResolved.token, chainId);
+
+    // Check swap spending limits before executing
+    this.limits.checkSwapTransaction(
+      fromResolved.token.symbol,
+      toResolved.token.symbol,
+      usdValue,
+      0 // No price impact for wrap/unwrap
+    );
+
+    // Estimate gas for the wrap/unwrap operation
+    const wethAddress = WETH_ADDRESSES[chainId];
+    const gasEstimate = await this.gasOracle.estimateGas({
+      from: this.address,
+      to: wethAddress as Address,
+      value: isWrapping ? amountIn : 0n,
+      data: isWrapping ? '0xd0e30db0' as Hex : `0x2e1a7d4d${amountIn.toString(16).padStart(64, '0')}` as Hex,
+    });
+
+    // Check balance including gas costs
     if (isWrapping) {
       const balance = await this.rpc.getBalance(this.address);
-      if (balance < amountIn) {
+      const totalRequired = amountIn + gasEstimate.estimatedCost;
+      if (balance < totalRequired) {
         throw new InsufficientFundsError({
-          required: { wei: amountIn, eth: formatETH(amountIn) },
+          required: { wei: totalRequired, eth: formatETH(totalRequired) },
           available: { wei: balance, eth: formatETH(balance) },
-          shortage: { wei: amountIn - balance, eth: formatETH(amountIn - balance) },
+          shortage: { wei: totalRequired - balance, eth: formatETH(totalRequired - balance) },
         });
       }
     } else {
-      // Unwrapping - check WETH balance
-      const wethAddress = WETH_ADDRESSES[chainId];
+      // Unwrapping - check WETH balance and ETH for gas
       const tokenContract = new Contract({
         address: wethAddress as Address,
         abi: ERC20_ABI,
         rpc: this.rpc,
       });
-      const balance = await tokenContract.read<bigint>('balanceOf', [this.address]);
-      if (balance < amountIn) {
+      const wethBalance = await tokenContract.read<bigint>('balanceOf', [this.address]);
+      if (wethBalance < amountIn) {
         throw new InsufficientFundsError({
           required: { wei: amountIn, eth: formatTokenAmount(amountIn, fromResolved.token) },
-          available: { wei: balance, eth: formatTokenAmount(balance, fromResolved.token) },
+          available: { wei: wethBalance, eth: formatTokenAmount(wethBalance, fromResolved.token) },
           shortage: {
-            wei: amountIn - balance,
-            eth: formatTokenAmount(amountIn - balance, fromResolved.token),
+            wei: amountIn - wethBalance,
+            eth: formatTokenAmount(amountIn - wethBalance, fromResolved.token),
           },
+        });
+      }
+      // Also check ETH balance for gas
+      const ethBalance = await this.rpc.getBalance(this.address);
+      if (ethBalance < gasEstimate.estimatedCost) {
+        throw new InsufficientFundsError({
+          required: { wei: gasEstimate.estimatedCost, eth: formatETH(gasEstimate.estimatedCost) },
+          available: { wei: ethBalance, eth: formatETH(ethBalance) },
+          shortage: { wei: gasEstimate.estimatedCost - ethBalance, eth: formatETH(gasEstimate.estimatedCost - ethBalance) },
         });
       }
     }
@@ -2187,6 +2245,13 @@ export class AgentWallet {
     const result = isWrapping
       ? await uniswap.wrapETH(amountIn)
       : await uniswap.unwrapWETH(amountIn);
+
+    // Record swap spend to enforce limits
+    this.limits.recordSwapSpend(
+      fromResolved.token.symbol,
+      toResolved.token.symbol,
+      usdValue
+    );
 
     // Get updated limits
     const swapStatus = this.limits.getSwapStatus();

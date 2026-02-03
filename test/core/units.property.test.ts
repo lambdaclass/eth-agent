@@ -79,9 +79,10 @@ describe('units property-based tests', () => {
     'mulPercent is approximately correct',
     (value, percent) => {
       const result = mulPercent(value, percent);
-      const expected = (value * BigInt(Math.round(percent * 100))) / 10000n;
+      // Using 1,000,000 multiplier for 0.0001% precision (6 decimal places)
+      const expected = (value * BigInt(Math.round(percent * 10000))) / 1000000n;
 
-      // Allow for rounding differences
+      // Allow for rounding differences (increased tolerance for higher precision)
       const diff = result > expected ? result - expected : expected - result;
       expect(diff).toBeLessThanOrEqual(1n);
     }
@@ -106,11 +107,21 @@ describe('units property-based tests', () => {
   ])(
     'toPercent calculates percentage correctly',
     (value, total) => {
+      // toPercent now uses 1,000,000 multiplier for 0.0001% precision
+      // and throws if the result would exceed safe integer bounds
+      const scaled = (value * 1000000n) / total;
+
+      // Skip test cases that would overflow (percentage > ~9 trillion%)
+      // This can happen with extreme value/total ratios
+      if (scaled > BigInt(Number.MAX_SAFE_INTEGER)) {
+        expect(() => toPercent(value, total)).toThrow('exceeds safe integer bounds');
+        return;
+      }
+
       const percent = toPercent(value, total);
 
-      // Reverse calculation
-      const calculated = (value * 10000n) / total;
-      const expected = Number(calculated) / 100;
+      // Reverse calculation with new precision (1,000,000 multiplier, divided by 10000)
+      const expected = Number(scaled) / 10000;
 
       expect(percent).toBeCloseTo(expected, 2);
     }

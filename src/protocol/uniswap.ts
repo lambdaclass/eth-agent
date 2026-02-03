@@ -509,7 +509,17 @@ export class UniswapClient {
     // Each uint256 is 32 bytes (64 hex chars)
     const amountOut = BigInt('0x' + hex.slice(0, 64));
     const sqrtPriceX96After = BigInt('0x' + hex.slice(64, 128));
-    const initializedTicksCrossed = Number(BigInt('0x' + hex.slice(128, 192)));
+
+    // initializedTicksCrossed is uint32 in the ABI, so max value is 4,294,967,295
+    // which is well within Number.MAX_SAFE_INTEGER (9,007,199,254,740,991)
+    const ticksCrossedBigInt = BigInt('0x' + hex.slice(128, 192));
+    if (ticksCrossedBigInt > BigInt(Number.MAX_SAFE_INTEGER)) {
+      throw new Error(
+        `initializedTicksCrossed value ${ticksCrossedBigInt.toString()} exceeds safe integer bounds`
+      );
+    }
+    const initializedTicksCrossed = Number(ticksCrossedBigInt);
+
     const gasEstimate = BigInt('0x' + hex.slice(192, 256));
 
     return { amountOut, sqrtPriceX96After, initializedTicksCrossed, gasEstimate };

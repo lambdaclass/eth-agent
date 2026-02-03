@@ -65,6 +65,9 @@ export class PaymentWatcher {
   private handlers: Set<PaymentHandler> = new Set();
   private running = false;
 
+  // Lock to prevent race condition during initialization
+  private initializingBlock: Promise<number> | null = null;
+
   constructor(config: PaymentWatcherConfig) {
     this.rpc = config.rpc;
     this.address = config.address.toLowerCase() as Address;
@@ -178,8 +181,26 @@ export class PaymentWatcher {
       const currentBlock = await this.rpc.getBlockNumber();
 
       // On first poll, start from current block
+      // Use a lock to prevent race condition if multiple poll() calls happen concurrently
       if (this.lastProcessedBlock === 0) {
-        this.lastProcessedBlock = currentBlock;
+        // If another call is already initializing, wait for it
+        if (this.initializingBlock !== null) {
+          await this.initializingBlock;
+          // After waiting, check if we still need to initialize
+          if (this.lastProcessedBlock === 0) {
+            this.lastProcessedBlock = currentBlock;
+          }
+          return [];
+        }
+
+        // Start initialization - create a promise that resolves when done
+        this.initializingBlock = (async () => {
+          this.lastProcessedBlock = currentBlock;
+          return currentBlock;
+        })();
+
+        await this.initializingBlock;
+        this.initializingBlock = null;
         return [];
       }
 

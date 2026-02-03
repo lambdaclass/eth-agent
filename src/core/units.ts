@@ -258,13 +258,16 @@ export function parseTokenAmount(amount: string): { value: bigint; symbol?: stri
 }
 
 /**
- * Multiply a value by a percentage (with precision)
+ * Multiply a value by a percentage (with high precision)
  * e.g., mulPercent(100, 1.5) = 101 (for 1.5% increase)
+ *
+ * Uses 1,000,000 multiplier for 0.0001% precision, which is
+ * sufficient for financial calculations like slippage and fees.
  */
 export function mulPercent(value: bigint, percent: number): bigint {
-  // Use 10000 for 0.01% precision
-  const factor = BigInt(Math.round(percent * 100));
-  return (value * factor) / 10000n;
+  // Use 1000000 for 0.0001% precision (6 decimal places)
+  const factor = BigInt(Math.round(percent * 10000));
+  return (value * factor) / 1000000n;
 }
 
 /**
@@ -277,8 +280,26 @@ export function addPercent(value: bigint, percent: number): bigint {
 
 /**
  * Calculate the percentage of a total
+ *
+ * Uses higher precision multiplier and validates the result
+ * fits in JavaScript's safe integer range to prevent precision loss.
+ *
+ * @throws Error if the result would exceed safe integer bounds
  */
 export function toPercent(value: bigint, total: bigint): number {
   if (total === 0n) return 0;
-  return Number((value * 10000n) / total) / 100;
+
+  // Use 1,000,000 multiplier for 0.0001% precision
+  const scaled = (value * 1000000n) / total;
+
+  // Check if the scaled value fits in Number's safe integer range
+  // MAX_SAFE_INTEGER = 9007199254740991 (~9 quadrillion)
+  // This handles percentages up to ~9 trillion % which is more than enough
+  if (scaled > BigInt(Number.MAX_SAFE_INTEGER)) {
+    throw new Error(
+      `Percentage calculation overflow: value ${value.toString()} / total ${total.toString()} exceeds safe integer bounds`
+    );
+  }
+
+  return Number(scaled) / 10000;
 }
