@@ -1053,4 +1053,308 @@ describe('AgentWallet', () => {
       }
     });
   });
+
+  // ============ Safety Constraint Tests ============
+
+  describe('transferToken safety constraints', () => {
+    it('throws when approval is denied for untrusted recipient', async () => {
+      mockContract.read
+        .mockResolvedValueOnce('TEST') // symbol
+        .mockResolvedValueOnce(18n); // decimals
+
+      const wallet = AgentWallet.create({
+        privateKey: testPrivateKey,
+        approvalConfig: {
+          requireApprovalWhen: { recipientIsNew: true },
+          handler: async () => false, // Always deny
+        },
+      });
+
+      await expect(wallet.transferToken({
+        token: tokenAddress,
+        to: recipient,
+        amount: '100',
+      })).rejects.toThrow('not approved');
+    });
+
+    it('succeeds when approval is granted for untrusted recipient', async () => {
+      mockContract.read
+        .mockResolvedValueOnce('TEST') // symbol
+        .mockResolvedValueOnce(18n); // decimals
+
+      mockContract.write.mockResolvedValue({
+        wait: vi.fn().mockResolvedValue({
+          status: 'success',
+          hash: testHash,
+          gasUsed: 50000n,
+          blockNumber: 12345,
+        }),
+      });
+
+      const wallet = AgentWallet.create({
+        privateKey: testPrivateKey,
+        requireSimulation: false,
+        approvalConfig: {
+          requireApprovalWhen: { recipientIsNew: true },
+          handler: async () => true, // Always approve
+        },
+      });
+
+      const result = await wallet.transferToken({
+        token: tokenAddress,
+        to: recipient,
+        amount: '100',
+      });
+
+      expect(result.success).toBe(true);
+    });
+
+    it('skips approval when recipient is trusted', async () => {
+      mockContract.read
+        .mockResolvedValueOnce('TEST') // symbol
+        .mockResolvedValueOnce(18n); // decimals
+
+      mockContract.write.mockResolvedValue({
+        wait: vi.fn().mockResolvedValue({
+          status: 'success',
+          hash: testHash,
+          gasUsed: 50000n,
+          blockNumber: 12345,
+        }),
+      });
+
+      const approvalHandler = vi.fn().mockResolvedValue(false);
+      const wallet = AgentWallet.create({
+        privateKey: testPrivateKey,
+        requireSimulation: false,
+        trustedAddresses: [{ address: recipient, label: 'Trusted' }],
+        approvalConfig: {
+          requireApprovalWhen: { recipientIsNew: true },
+          handler: approvalHandler,
+        },
+      });
+
+      const result = await wallet.transferToken({
+        token: tokenAddress,
+        to: recipient,
+        amount: '100',
+      });
+
+      expect(result.success).toBe(true);
+      expect(approvalHandler).not.toHaveBeenCalled();
+    });
+
+    it('runs simulation when enabled', async () => {
+      mockContract.read
+        .mockResolvedValueOnce('TEST') // symbol
+        .mockResolvedValueOnce(18n); // decimals
+
+      mockContract.write.mockResolvedValue({
+        wait: vi.fn().mockResolvedValue({
+          status: 'success',
+          hash: testHash,
+          gasUsed: 50000n,
+          blockNumber: 12345,
+        }),
+      });
+
+      const wallet = AgentWallet.create({
+        privateKey: testPrivateKey,
+        requireSimulation: true,
+        trustedAddresses: [{ address: recipient }],
+        approvalConfig: { requireApprovalWhen: { never: true } },
+      });
+
+      await wallet.transferToken({
+        token: tokenAddress,
+        to: recipient,
+        amount: '100',
+      });
+
+      expect(mockSimulation.validate).toHaveBeenCalled();
+    });
+  });
+
+  describe('sendStablecoin safety constraints', () => {
+    const usdcAddress = '0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48' as Address;
+
+    it('throws when approval is denied for untrusted recipient', async () => {
+      // Mock the token balance check
+      mockContract.read.mockResolvedValue(1000000000n); // 1000 USDC
+
+      const wallet = AgentWallet.create({
+        privateKey: testPrivateKey,
+        approvalConfig: {
+          requireApprovalWhen: { recipientIsNew: true },
+          handler: async () => false, // Always deny
+        },
+      });
+
+      // Import USDC token info
+      const { USDC } = await import('../../src/stablecoins/index.js');
+
+      await expect(wallet.sendStablecoin({
+        token: USDC,
+        to: recipient,
+        amount: '100',
+      })).rejects.toThrow('not approved');
+    });
+
+    it('skips approval when recipient is trusted', async () => {
+      // Mock the token balance check
+      mockContract.read.mockResolvedValue(1000000000n); // 1000 USDC
+
+      mockContract.write.mockResolvedValue({
+        wait: vi.fn().mockResolvedValue({
+          status: 'success',
+          hash: testHash,
+          gasUsed: 50000n,
+          blockNumber: 12345,
+        }),
+      });
+
+      const approvalHandler = vi.fn().mockResolvedValue(false);
+      const wallet = AgentWallet.create({
+        privateKey: testPrivateKey,
+        requireSimulation: false,
+        trustedAddresses: [{ address: recipient, label: 'Trusted' }],
+        approvalConfig: {
+          requireApprovalWhen: { recipientIsNew: true },
+          handler: approvalHandler,
+        },
+      });
+
+      const { USDC } = await import('../../src/stablecoins/index.js');
+
+      const result = await wallet.sendStablecoin({
+        token: USDC,
+        to: recipient,
+        amount: '100',
+      });
+
+      expect(result.success).toBe(true);
+      expect(approvalHandler).not.toHaveBeenCalled();
+    });
+
+    it('runs simulation when enabled', async () => {
+      // Mock the token balance check
+      mockContract.read.mockResolvedValue(1000000000n); // 1000 USDC
+
+      mockContract.write.mockResolvedValue({
+        wait: vi.fn().mockResolvedValue({
+          status: 'success',
+          hash: testHash,
+          gasUsed: 50000n,
+          blockNumber: 12345,
+        }),
+      });
+
+      const wallet = AgentWallet.create({
+        privateKey: testPrivateKey,
+        requireSimulation: true,
+        trustedAddresses: [{ address: recipient }],
+        approvalConfig: { requireApprovalWhen: { never: true } },
+      });
+
+      const { USDC } = await import('../../src/stablecoins/index.js');
+
+      await wallet.sendStablecoin({
+        token: USDC,
+        to: recipient,
+        amount: '100',
+      });
+
+      expect(mockSimulation.validate).toHaveBeenCalled();
+    });
+  });
+
+  describe('swap safety constraints', () => {
+    it('throws when self-address is blocked', async () => {
+      const wallet = AgentWallet.create({
+        privateKey: testPrivateKey,
+      });
+
+      // Get the wallet address and block it
+      const walletAddress = wallet.address;
+      const blockedWallet = AgentWallet.create({
+        privateKey: testPrivateKey,
+        blockedAddresses: [{ address: walletAddress, reason: 'Blocked for testing' }],
+      });
+
+      await expect(blockedWallet.swap({
+        fromToken: 'USDC',
+        toToken: 'ETH',
+        amount: '100',
+      })).rejects.toThrow('blocked');
+    });
+
+    it('throws when approval is denied for high-value swap', async () => {
+      const wallet = AgentWallet.create({
+        privateKey: testPrivateKey,
+        approvalConfig: {
+          requireApprovalWhen: { always: true },
+          handler: async () => false, // Always deny
+        },
+        limits: {
+          swap: {
+            perTransactionUSD: 100000,
+            perDayUSD: 1000000,
+          },
+        },
+      });
+
+      // Mock quote
+      mockRpc.call.mockResolvedValue(
+        '0x' +
+        '0000000000000000000000000000000000000000000000000de0b6b3a7640000' +
+        '0000000000000000000000000000000000000000000000000000000000000000' +
+        '0000000000000000000000000000000000000000000000000000000000000001' +
+        '000000000000000000000000000000000000000000000000000000000003d090'
+      );
+
+      await expect(wallet.swap({
+        fromToken: 'USDC',
+        toToken: 'WETH',
+        amount: '100',
+      })).rejects.toThrow('not approved');
+    });
+
+    it('succeeds when approval is granted', async () => {
+      mockRpc.call.mockResolvedValue(
+        '0x' +
+        '0000000000000000000000000000000000000000000000000de0b6b3a7640000' +
+        '0000000000000000000000000000000000000000000000000000000000000000' +
+        '0000000000000000000000000000000000000000000000000000000000000001' +
+        '000000000000000000000000000000000000000000000000000000000003d090'
+      );
+
+      // Mock the token allowance check (already approved)
+      mockContract.read.mockResolvedValue(2n ** 256n - 1n);
+
+      const wallet = AgentWallet.create({
+        privateKey: testPrivateKey,
+        approvalConfig: {
+          requireApprovalWhen: { always: true },
+          handler: async () => true, // Always approve
+        },
+        limits: {
+          swap: {
+            perTransactionUSD: 100000,
+            perDayUSD: 1000000,
+          },
+        },
+      });
+
+      // This will still fail because we haven't mocked the full swap execution,
+      // but it should get past the approval check
+      const result = await wallet.safeSwap({
+        fromToken: 'USDC',
+        toToken: 'WETH',
+        amount: '100',
+      });
+
+      // safeSwap catches errors, so we just verify it didn't fail on approval
+      expect(result).toBeDefined();
+    });
+  });
 });

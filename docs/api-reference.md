@@ -537,6 +537,73 @@ SafetyPresets.AGGRESSIVE    // 1/10/50 ETH, approve >1 ETH
 SafetyPresets.UNLIMITED     // No limits (testing only)
 ```
 
+## ApprovalConfig
+
+Configuration for human approval flows.
+
+```typescript
+interface ApprovalConfig {
+  requireApprovalWhen?: {
+    amountExceeds?: string | bigint;  // e.g., '0.1 ETH' or '100 USDC'
+    recipientIsNew?: boolean;          // Trigger for untrusted recipients
+    riskLevelAbove?: 'low' | 'medium'; // Trigger for high-risk operations
+    always?: boolean;                  // Always require approval
+  };
+  handler?: ApprovalHandler;           // Callback function
+  timeout?: number;                    // Timeout in ms (default: 5 minutes)
+  onTimeout?: 'reject' | 'approve';    // Action on timeout (default: 'reject')
+}
+
+type ApprovalHandler = (request: ApprovalRequest) => Promise<boolean>;
+```
+
+## ApprovalRequest
+
+Structure passed to the approval handler for all wallet operations.
+
+```typescript
+interface ApprovalRequest {
+  id: string;
+  type: 'send' | 'approve' | 'contract_call' | 'swap' | 'bridge' | 'transfer_token' | 'unknown';
+  timestamp: Date;
+  summary: string;  // Human-readable summary
+  details: {
+    from: Address;
+    to?: Address;
+    value?: { wei: bigint; eth: string; usd?: number };
+    data?: Hex;
+    gasCost?: { wei: bigint; eth: string; usd?: number };
+    totalCost?: { wei: bigint; eth: string; usd?: number };
+    contractMethod?: string;
+    contractArgs?: unknown[];
+    risk: 'low' | 'medium' | 'high';
+    warnings: string[];
+    // Swap-specific (when type === 'swap')
+    swap?: {
+      tokenIn: { symbol: string; amount: string };
+      tokenOut: { symbol: string; amount: string };
+      priceImpact: number;
+    };
+    // Bridge-specific (when type === 'bridge')
+    bridge?: {
+      sourceChain: number;
+      destinationChain: number;
+    };
+  };
+}
+```
+
+### Operation Types
+
+| Type | Method | Description |
+|------|--------|-------------|
+| `send` | `send()`, `sendStablecoin()` | ETH or stablecoin transfer |
+| `transfer_token` | `transferToken()` | Generic ERC-20 token transfer |
+| `swap` | `swap()` | Uniswap token swap |
+| `bridge` | `bridgeUSDC()` | Cross-chain USDC bridge |
+| `approve` | Internal | Token approval for contracts |
+| `contract_call` | Internal | Generic contract interaction |
+
 ## Core Utilities
 
 ```typescript

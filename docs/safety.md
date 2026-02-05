@@ -13,6 +13,25 @@ Traditional Ethereum libraries assume a human reviews each transaction. AI agent
 
 eth-agent addresses each of these with architectural constraints.
 
+## Safety Constraint Coverage
+
+All wallet methods enforce consistent safety constraints:
+
+| Method | Blocked Addresses | Spending Limits | Trusted Addresses | Approval Flow | Simulation |
+|--------|:-----------------:|:---------------:|:-----------------:|:-------------:|:----------:|
+| `send()` | ✅ | ✅ | ✅ | ✅ | ✅ |
+| `transferToken()` | ✅ | N/A | ✅ | ✅ | ✅ |
+| `sendStablecoin()` | ✅ | ✅ | ✅ | ✅ | ✅ |
+| `bridgeUSDC()` | ✅ | ✅ | ✅ | ✅ | N/A |
+| `swap()` | ✅ | ✅ | N/A | ✅ | N/A |
+
+**What this means:**
+- **Blocked Addresses**: Transactions to blocked addresses are rejected with a clear error
+- **Spending Limits**: Per-transaction, hourly, and daily limits are enforced
+- **Trusted Addresses**: Transactions to trusted addresses can skip approval requirements
+- **Approval Flow**: Large or suspicious transactions can require human approval before execution
+- **Simulation**: Transactions are simulated before execution to catch reverts early
+
 ## Spending Limits
 
 ### Configuration
@@ -242,12 +261,15 @@ When triggered:
 
 ## Human Approval
 
+Human approval is supported for all wallet operations: ETH sends, token transfers, stablecoin sends, swaps, and bridges. This provides a consistent security model across your entire wallet.
+
 ### Basic Configuration
 
 ```typescript
 const wallet = AgentWallet.create({
   privateKey: KEY,
   onApprovalRequired: async (request) => {
+    console.log(`Operation: ${request.type}`);  // 'send' | 'transfer_token' | 'swap' | 'bridge'
     console.log(`Summary: ${request.summary}`);
     console.log(`Details:`, request.details);
     return await yourApprovalSystem.ask(request);
@@ -265,16 +287,24 @@ const wallet = AgentWallet.create({
 
 ```typescript
 interface ApprovalRequest {
+  type: 'send' | 'approve' | 'contract_call' | 'swap' | 'bridge' | 'transfer_token' | 'unknown';
   summary: string;  // "Send 0.5 ETH to 0x1234...5678"
   details: {
-    to: Address;
-    amount: { wei: bigint; eth: string };
-    estimatedGas: { wei: bigint; eth: string };
-    total: { wei: bigint; eth: string };
-    recipient: {
-      isTrusted: boolean;
-      isNew: boolean;
-      label?: string;
+    from: Address;
+    to?: Address;
+    value?: { wei: bigint; eth: string };
+    risk: 'low' | 'medium' | 'high';
+    warnings: string[];
+    // Swap-specific details (when type === 'swap')
+    swap?: {
+      tokenIn: { symbol: string; amount: string };
+      tokenOut: { symbol: string; amount: string };
+      priceImpact: number;
+    };
+    // Bridge-specific details (when type === 'bridge')
+    bridge?: {
+      sourceChain: number;
+      destinationChain: number;
     };
   };
 }
@@ -305,6 +335,32 @@ onApprovalRequired: async (request) => {
   return await waitForApprovalToken(request.id);
 }
 ```
+
+### Operation-Specific Approval Behavior
+
+Each wallet operation has specific risk thresholds and warnings:
+
+**ETH Sends (`send`):**
+- Risk levels: high (>1 ETH), medium (>0.1 ETH), low (≤0.1 ETH)
+- Warnings include gas cost estimates
+
+**Token Transfers (`transfer_token`):**
+- Risk levels: medium (untrusted recipient), low (trusted recipient)
+- Useful for ERC-20 tokens without USD pricing
+
+**Stablecoin Sends (`sendStablecoin`):**
+- Risk levels: high (>$1,000), medium (>$100), low (≤$100)
+- Warnings for untrusted recipients
+
+**Bridges (`bridge`):**
+- Risk levels: high (>$10,000), medium (≤$10,000)
+- Includes source and destination chain information
+- Warnings for untrusted recipients on destination chain
+
+**Swaps (`swap`):**
+- Risk levels based on price impact: high (>2%), medium (>1%), low (≤1%)
+- Includes token pair and price impact information
+- Warnings for high price impact trades
 
 ## Address Policies
 
@@ -367,7 +423,7 @@ const wallet = AgentWallet.create({
 
 ## Transaction Simulation
 
-All transactions are simulated before execution:
+Transactions are simulated before execution to catch failures early:
 
 ```typescript
 const wallet = AgentWallet.create({
@@ -375,6 +431,15 @@ const wallet = AgentWallet.create({
   requireSimulation: true,  // Default: true
 });
 ```
+
+**Simulation is performed for:**
+- ETH sends (`send()`)
+- Token transfers (`transferToken()`)
+- Stablecoin sends (`sendStablecoin()`)
+
+**Simulation is skipped for:**
+- Swaps (`swap()`) - Uniswap quote already uses `eth_call` internally
+- Bridges (`bridgeUSDC()`) - CCTP burns have limited simulation value
 
 Simulation catches:
 - Reverts (with decoded reason)

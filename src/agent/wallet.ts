@@ -13,6 +13,7 @@ import { ENS } from '../protocol/ens.js';
 import { GasOracle } from '../protocol/gas.js';
 import { TransactionBuilder } from '../protocol/transaction.js';
 import { Contract, ERC20_ABI } from '../protocol/contract.js';
+import { encodeFunctionCall } from '../core/abi.js';
 import { NonceManager } from '../protocol/nonce.js';
 import { LimitsEngine, type SpendingLimits } from './limits.js';
 import { SimulationEngine } from './simulation.js';
@@ -663,6 +664,28 @@ export class AgentWallet {
       ? options.amount
       : parseAmount(options.amount, dec);
 
+    // Check if approval is required
+    const isTrusted = this.trustedAddresses.has(to.toLowerCase());
+    if (this.approval.requiresApproval({ recipientIsNew: !isTrusted })) {
+      const approved = await this.approval.requestApproval({
+        type: 'transfer_token',
+        summary: `Transfer ${formatUnits(amount, dec)} ${symbol} to ${options.to}`,
+        details: {
+          from: this.address,
+          to,
+          risk: isTrusted ? 'low' : 'medium',
+          warnings: isTrusted ? [] : ['Recipient is not in trusted addresses'],
+        },
+      });
+      if (!approved) throw new ApprovalDeniedError();
+    }
+
+    // Simulate transaction if required
+    if (this.requireSimulation) {
+      const transferData = encodeFunctionCall('transfer(address,uint256)', [to, amount]);
+      await this.simulation.validate({ to: options.token, from: this.address, data: transferData });
+    }
+
     // Write transfer
     const result = await contract.write('transfer', [to, amount]);
     const receipt = await result.wait();
@@ -727,6 +750,23 @@ export class AgentWallet {
     // Check stablecoin spending limits
     this.limits.checkStablecoinTransaction(options.token, rawAmount);
 
+    // Check if approval is required
+    const isTrusted = this.trustedAddresses.has(to.toLowerCase());
+    if (this.approval.requiresApproval({ amount: rawAmount, recipientIsNew: !isTrusted })) {
+      const approved = await this.approval.requestApproval({
+        type: 'send',
+        summary: `Send ${formattedAmount} ${options.token.symbol} to ${options.to}`,
+        details: {
+          from: this.address,
+          to,
+          value: { wei: rawAmount, eth: formattedAmount },
+          risk: rawAmount > 1000_000000n ? 'high' : rawAmount > 100_000000n ? 'medium' : 'low',
+          warnings: isTrusted ? [] : ['Recipient is not in trusted addresses'],
+        },
+      });
+      if (!approved) throw new ApprovalDeniedError();
+    }
+
     const contract = new Contract({
       address: tokenAddress as Address,
       abi: ERC20_ABI,
@@ -742,6 +782,12 @@ export class AgentWallet {
         available: { wei: balance, eth: formatStablecoinAmount(balance, options.token) },
         shortage: { wei: rawAmount - balance, eth: formatStablecoinAmount(rawAmount - balance, options.token) },
       });
+    }
+
+    // Simulate transaction if required
+    if (this.requireSimulation) {
+      const transferData = encodeFunctionCall('transfer(address,uint256)', [to, rawAmount]);
+      await this.simulation.validate({ to: tokenAddress as Address, from: this.address, data: transferData });
     }
 
     // Transfer
@@ -1064,6 +1110,27 @@ export class AgentWallet {
 
     // Check bridge spending limits
     this.limits.checkBridgeTransaction(USDC, rawAmount, options.destinationChainId);
+
+    // Check if approval is required
+    const recipientAddr = recipient ?? this.address;
+    const recipientIsSelf = recipientAddr.toLowerCase() === this.address.toLowerCase();
+    const isTrusted = recipientIsSelf || this.trustedAddresses.has(recipientAddr.toLowerCase());
+
+    if (this.approval.requiresApproval({ amount: rawAmount, recipientIsNew: !isTrusted })) {
+      const approved = await this.approval.requestApproval({
+        type: 'bridge',
+        summary: `Bridge ${formattedAmount} USDC to chain ${options.destinationChainId}`,
+        details: {
+          from: this.address,
+          to: recipientAddr,
+          value: { wei: rawAmount, eth: formattedAmount },
+          risk: rawAmount > 10000_000000n ? 'high' : 'medium',
+          warnings: isTrusted ? [] : ['Recipient is not in trusted addresses'],
+          bridge: { sourceChain: chainId, destinationChain: options.destinationChainId },
+        },
+      });
+      if (!approved) throw new ApprovalDeniedError();
+    }
 
     // Get cached bridge
     const bridge = await this.getBridge();
@@ -1912,6 +1979,12 @@ export class AgentWallet {
       throw new TokenNotSupportedError({ token: options.toToken, chainId });
     }
 
+    // Defensive: ensure our address isn't blocked (swap sends to self)
+    const selfBlocked = this.blockedAddresses.get(this.address.toLowerCase());
+    if (selfBlocked) {
+      throw new BlockedAddressError(this.address, selfBlocked);
+    }
+
     // 2. Check token allowlists/blocklists via limits
     this.limits.checkSwapTransaction(
       fromResolved.token.symbol,
@@ -1998,6 +2071,28 @@ export class AgentWallet {
       usdValue,
       quote.priceImpact
     );
+
+    // Check if approval is required for swap
+    if (this.approval.requiresApproval({
+      amount: usdValue,
+      riskLevel: quote.priceImpact > 2 ? 'high' : quote.priceImpact > 1 ? 'medium' : 'low',
+    })) {
+      const approved = await this.approval.requestApproval({
+        type: 'swap',
+        summary: `Swap ${formatTokenAmount(amountIn, fromResolved.token)} ${fromResolved.token.symbol} for ~${formatTokenAmount(quote.amountOut, toResolved.token)} ${toResolved.token.symbol}`,
+        details: {
+          from: this.address,
+          risk: quote.priceImpact > 2 ? 'high' : quote.priceImpact > 1 ? 'medium' : 'low',
+          warnings: quote.priceImpact > 1 ? ['High price impact - consider splitting'] : [],
+          swap: {
+            tokenIn: { symbol: fromResolved.token.symbol, amount: formatTokenAmount(amountIn, fromResolved.token) },
+            tokenOut: { symbol: toResolved.token.symbol, amount: formatTokenAmount(quote.amountOut, toResolved.token) },
+            priceImpact: quote.priceImpact,
+          },
+        },
+      });
+      if (!approved) throw new ApprovalDeniedError();
+    }
 
     // 9. Check balance and approve if needed
     if (isFromETH) {

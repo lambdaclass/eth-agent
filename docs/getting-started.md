@@ -90,20 +90,28 @@ const wallet = AgentWallet.create({
 
 ## Require Human Approval
 
+Human approval is supported for all wallet operations: sends, transfers, swaps, and bridges.
+
 ```typescript
 const wallet = AgentWallet.create({
   privateKey: KEY,
   onApprovalRequired: async (request) => {
+    // request.type: 'send' | 'transfer_token' | 'swap' | 'bridge'
+    console.log(`Operation: ${request.type}`);
     console.log(`Approve: ${request.summary}?`);
-    // Integrate with your approval system
+    console.log(`Risk: ${request.details.risk}`);
+    // Integrate with your approval system (Slack, email, etc.)
     return await askHuman();
   },
   approvalConfig: {
     requireApprovalWhen: {
       amountExceeds: '0.1 ETH',
-      recipientIsNew: true,
+      recipientIsNew: true,  // Untrusted addresses trigger approval
     },
   },
+  trustedAddresses: [
+    { address: 'treasury.eth', label: 'Company Treasury' },
+  ],
 });
 ```
 

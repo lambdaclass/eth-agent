@@ -272,7 +272,13 @@ const wallet = AgentWallet.create({
 ```
 ## Safety
 
-Spending limits prevent your agent from draining a wallet:
+All wallet operations (`send`, `transferToken`, `sendStablecoin`, `swap`, `bridgeUSDC`) share consistent safety constraints:
+
+- **Blocked addresses** - Reject transactions to known-bad addresses
+- **Spending limits** - Per-transaction, hourly, and daily caps
+- **Trusted addresses** - Skip approval for known-good recipients
+- **Human approval** - Require confirmation for large/risky operations
+- **Simulation** - Test transactions before execution
 
 ```typescript
 const wallet = AgentWallet.create({
@@ -282,6 +288,12 @@ const wallet = AgentWallet.create({
     perHour: '500 USDC',          // Hourly cap
     perDay: '2000 USDC',          // Daily cap
   },
+  trustedAddresses: [
+    { address: 'treasury.eth', label: 'Company Treasury' },
+  ],
+  blockedAddresses: [
+    { address: '0xdead...', reason: 'Known scam' },
+  ],
 });
 
 // Transaction exceeding limit fails with structured error
@@ -304,16 +316,20 @@ const wallet = AgentWallet.create({
 });
 ```
 
-**Human approval** for large transactions:
+**Human approval** for large or untrusted transactions:
 
 ```typescript
 const wallet = AgentWallet.create({
   privateKey: KEY,
-  onApprovalRequired: async (tx) => {
-    return await askHuman(`Approve ${tx.summary}?`);
+  onApprovalRequired: async (request) => {
+    // request.type: 'send' | 'swap' | 'bridge' | 'transfer_token'
+    return await askHuman(`Approve ${request.summary}?`);
   },
   approvalConfig: {
-    requireApprovalWhen: { amountExceeds: '500 USDC' },
+    requireApprovalWhen: {
+      amountExceeds: '500 USDC',
+      recipientIsNew: true,  // Untrusted recipients require approval
+    },
   },
 });
 ```
