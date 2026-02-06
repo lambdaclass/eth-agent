@@ -100,6 +100,13 @@ export {
   isValidPrivateKey,
 } from './signature.js';
 
+// Secure key management
+export {
+  SecureKey,
+  secureKeyFromHex,
+  secureKeyFromBytes,
+} from './secure-key.js';
+
 // Address utilities
 export {
   isAddress,

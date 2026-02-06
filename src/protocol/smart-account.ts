@@ -223,18 +223,19 @@ export class SmartAccount {
 
   /**
    * Sign a UserOperation
-   * Requires owner to be an EOA with exportPrivateKey method
+   * Requires owner to be an EOA with usePrivateKey method
    */
   signUserOp(userOp: UserOperation, chainId: number): UserOperation {
     const hash = getUserOpHash(userOp, this.entryPoint, chainId);
 
     // Owner must be an EOA to sign
     const eoa = this.owner as EOA;
-    if (!('exportPrivateKey' in eoa)) {
-      throw new Error('Owner must be an EOA with exportPrivateKey method');
+    if (!('usePrivateKey' in eoa)) {
+      throw new Error('Owner must be an EOA with usePrivateKey method');
     }
-    const privateKey = eoa.exportPrivateKey();
-    const sig = sign(hash, privateKey);
+
+    // Use scoped access to the private key
+    const sig = eoa.usePrivateKey((privateKey) => sign(hash, privateKey));
 
     // Concatenate r, s, v for the signature
     const sigHex = `${sig.r}${sig.s.slice(2)}${sig.v.toString(16).padStart(2, '0')}` as Hex;

@@ -7,6 +7,7 @@ import type { Address, Hash, Hex } from '../core/types.js';
 import { generatePrivateKey, privateKeyToAddress, sign } from '../core/signature.js';
 import { keccak256 } from '../core/hash.js';
 import { encodeParameters } from '../core/abi.js';
+import { SecureKey } from '../core/secure-key.js';
 
 export interface SessionKeyPermissions {
   // Time constraints
@@ -31,11 +32,24 @@ export interface SessionKeyPermissions {
 
 export interface SessionKey {
   publicKey: Address;
+  /** @deprecated Access via SessionKeyManager methods instead */
   privateKey: Hex;
   permissions: SessionKeyPermissions;
   owner: Address;              // The account that created this session
   createdAt: number;
   nonce: number;               // Tracks usage
+}
+
+/**
+ * Internal session key with secure key storage
+ */
+interface InternalSessionKey {
+  publicKey: Address;
+  secureKey: SecureKey;
+  permissions: SessionKeyPermissions;
+  owner: Address;
+  createdAt: number;
+  nonce: number;
 }
 
 export interface SessionKeySignature {
@@ -49,25 +63,34 @@ export interface SessionKeySignature {
  * Creates and manages session keys for delegated signing
  */
 export class SessionKeyManager {
-  private readonly sessions: Map<Address, SessionKey> = new Map();
-  private readonly ownerKey: Hex;
+  private readonly sessions: Map<Address, InternalSessionKey> = new Map();
+  private readonly _ownerSecureKey: SecureKey;
   private readonly ownerAddress: Address;
+  private _disposed = false;
 
   constructor(ownerKey: Hex) {
-    this.ownerKey = ownerKey;
+    this._ownerSecureKey = SecureKey.fromHex(ownerKey);
     this.ownerAddress = privateKeyToAddress(ownerKey);
+  }
+
+  /**
+   * Check if the manager has been disposed
+   */
+  get isDisposed(): boolean {
+    return this._disposed;
   }
 
   /**
    * Create a new session key
    */
   createSession(permissions: SessionKeyPermissions): SessionKey {
+    this.assertNotDisposed();
     const privateKey = generatePrivateKey();
     const publicKey = privateKeyToAddress(privateKey);
 
-    const session: SessionKey = {
+    const internalSession: InternalSessionKey = {
       publicKey,
-      privateKey,
+      secureKey: SecureKey.fromHex(privateKey),
       permissions: {
         ...permissions,
         validAfter: permissions.validAfter ?? 0,
@@ -77,32 +100,55 @@ export class SessionKeyManager {
       nonce: 0,
     };
 
-    this.sessions.set(publicKey, session);
-    return session;
+    this.sessions.set(publicKey, internalSession);
+    return this.toExternalSessionKey(internalSession);
+  }
+
+  /**
+   * Convert internal session to external SessionKey interface
+   */
+  private toExternalSessionKey(internal: InternalSessionKey): SessionKey {
+    return {
+      publicKey: internal.publicKey,
+      privateKey: internal.secureKey.exportHex(),
+      permissions: internal.permissions,
+      owner: internal.owner,
+      createdAt: internal.createdAt,
+      nonce: internal.nonce,
+    };
   }
 
   /**
    * Get a session key by address
    */
   getSession(address: Address): SessionKey | undefined {
-    return this.sessions.get(address);
+    this.assertNotDisposed();
+    const internal = this.sessions.get(address);
+    return internal ? this.toExternalSessionKey(internal) : undefined;
   }
 
   /**
-   * Revoke a session key
+   * Revoke a session key and securely dispose of its key material
    */
   revokeSession(address: Address): boolean {
-    return this.sessions.delete(address);
+    this.assertNotDisposed();
+    const session = this.sessions.get(address);
+    if (session) {
+      session.secureKey.dispose();
+      return this.sessions.delete(address);
+    }
+    return false;
   }
 
   /**
    * List all active sessions
    */
   listSessions(): SessionKey[] {
+    this.assertNotDisposed();
     const now = Math.floor(Date.now() / 1000);
-    return Array.from(this.sessions.values()).filter(
-      (s) => s.permissions.validUntil > now
-    );
+    return Array.from(this.sessions.values())
+      .filter((s) => s.permissions.validUntil > now)
+      .map((s) => this.toExternalSessionKey(s));
   }
 
   /**
@@ -116,6 +162,7 @@ export class SessionKeyManager {
       selector?: Hex;
     }
   ): { valid: boolean; reason?: string } {
+    this.assertNotDisposed();
     const session = this.sessions.get(sessionAddress);
     if (!session) {
       return { valid: false, reason: 'Session not found' };
@@ -180,6 +227,7 @@ export class SessionKeyManager {
       selector?: Hex;
     }
   ): SessionKeySignature {
+    this.assertNotDisposed();
     const session = this.sessions.get(sessionAddress);
     if (!session) {
       throw new Error('Session not found');
@@ -190,8 +238,8 @@ export class SessionKeyManager {
       throw new Error(`Invalid action: ${validation.reason}`);
     }
 
-    // Sign with session key
-    const signature = sign(hash, session.privateKey);
+    // Sign with session key using scoped access
+    const signature = session.secureKey.use((key) => sign(hash, key));
 
     // Increment nonce
     session.nonce++;
@@ -239,6 +287,7 @@ export class SessionKeyManager {
    * This signature proves the owner authorized this session
    */
   authorizeSession(sessionAddress: Address): Hex {
+    this.assertNotDisposed();
     const session = this.sessions.get(sessionAddress);
     if (!session) {
       throw new Error('Session not found');
@@ -253,8 +302,8 @@ export class SessionKeyManager {
       )
     );
 
-    // Sign with owner key
-    const signature = sign(authHash, this.ownerKey);
+    // Sign with owner key using scoped access
+    const signature = this._ownerSecureKey.use((key) => sign(authHash, key));
     // Concatenate r, s, v for the signature
     return `${signature.r}${signature.s.slice(2)}${signature.v.toString(16).padStart(2, '0')}` as Hex;
   }
@@ -263,6 +312,7 @@ export class SessionKeyManager {
    * Export session for storage/transfer
    */
   exportSession(sessionAddress: Address): string {
+    this.assertNotDisposed();
     const session = this.sessions.get(sessionAddress);
     if (!session) {
       throw new Error('Session not found');
@@ -270,7 +320,7 @@ export class SessionKeyManager {
 
     return JSON.stringify({
       publicKey: session.publicKey,
-      privateKey: session.privateKey,
+      privateKey: session.secureKey.exportHex(),
       permissions: {
         ...session.permissions,
         maxValue: session.permissions.maxValue?.toString(),
@@ -286,11 +336,12 @@ export class SessionKeyManager {
    * Import session from storage
    */
   importSession(data: string): SessionKey {
+    this.assertNotDisposed();
     const parsed = JSON.parse(data);
 
-    const session: SessionKey = {
+    const internalSession: InternalSessionKey = {
       publicKey: parsed.publicKey,
-      privateKey: parsed.privateKey,
+      secureKey: SecureKey.fromHex(parsed.privateKey),
       permissions: {
         ...parsed.permissions,
         maxValue: parsed.permissions.maxValue ? BigInt(parsed.permissions.maxValue) : undefined,
@@ -301,8 +352,35 @@ export class SessionKeyManager {
       nonce: parsed.nonce,
     };
 
-    this.sessions.set(session.publicKey, session);
-    return session;
+    this.sessions.set(internalSession.publicKey, internalSession);
+    return this.toExternalSessionKey(internalSession);
+  }
+
+  /**
+   * Securely dispose of all session keys and the owner key.
+   * After calling dispose(), any attempt to use the manager will throw an error.
+   */
+  dispose(): void {
+    if (this._disposed) return;
+
+    // Dispose all session keys
+    for (const session of this.sessions.values()) {
+      session.secureKey.dispose();
+    }
+    this.sessions.clear();
+
+    // Dispose owner key
+    this._ownerSecureKey.dispose();
+    this._disposed = true;
+  }
+
+  /**
+   * Assert that the manager has not been disposed
+   */
+  private assertNotDisposed(): void {
+    if (this._disposed) {
+      throw new Error('SessionKeyManager has been disposed and cannot be used');
+    }
   }
 }
 
