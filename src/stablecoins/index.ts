@@ -20,4 +20,5 @@ export {
   isKnownStablecoin,
   parseStablecoinAmount,
   formatStablecoinAmount,
+  validateAmountInput,
 } from './tokens.js';
