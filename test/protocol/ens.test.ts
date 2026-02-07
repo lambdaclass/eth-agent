@@ -1,5 +1,14 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { ENS, namehash, dnsEncode, isENSName, resolveAddress } from '../../src/protocol/ens.js';
+import {
+  ENS,
+  ENSValidationError,
+  namehash,
+  dnsEncode,
+  isENSName,
+  resolveAddress,
+  normalizeENSName,
+  isValidENSName,
+} from '../../src/protocol/ens.js';
 import type { RPCClient } from '../../src/protocol/rpc.js';
 import type { Address, Hash, Hex } from '../../src/core/types.js';
 
@@ -549,6 +558,145 @@ describe('ENS', () => {
       vi.mocked(mockRpc.call).mockResolvedValueOnce('0x0000000000000000000000000000000000000000000000000000000000000000' as Hex);
 
       await expect(resolveAddress('nonexistent.eth', mockRpc)).rejects.toThrow('Failed to resolve ENS name');
+    });
+  });
+
+  describe('normalizeENSName', () => {
+    it('normalizes valid names', () => {
+      expect(normalizeENSName('vitalik')).toBe('vitalik.eth');
+      expect(normalizeENSName('vitalik.eth')).toBe('vitalik.eth');
+      expect(normalizeENSName('VITALIK.ETH')).toBe('vitalik.eth');
+      expect(normalizeENSName('VitaLik')).toBe('vitalik.eth');
+    });
+
+    it('preserves subdomains', () => {
+      expect(normalizeENSName('foo.bar.eth')).toBe('foo.bar.eth');
+      expect(normalizeENSName('FOO.BAR.ETH')).toBe('foo.bar.eth');
+    });
+
+    it('applies NFC normalization', () => {
+      // é as combining character vs precomposed
+      const combining = 'cafe\u0301'; // cafe + combining acute
+      const precomposed = 'café'; // precomposed
+      expect(normalizeENSName(combining)).toBe(normalizeENSName(precomposed));
+    });
+
+    it('rejects null bytes', () => {
+      expect(() => normalizeENSName('vitalik\x00.eth')).toThrow(ENSValidationError);
+      expect(() => normalizeENSName('vital\x00ik')).toThrow(ENSValidationError);
+    });
+
+    it('rejects control characters', () => {
+      expect(() => normalizeENSName('vitalik\x01.eth')).toThrow(ENSValidationError);
+      expect(() => normalizeENSName('vital\x1fik')).toThrow(ENSValidationError);
+    });
+
+    it('rejects empty names', () => {
+      expect(() => normalizeENSName('')).toThrow(ENSValidationError);
+    });
+
+    it('rejects empty labels', () => {
+      expect(() => normalizeENSName('foo..eth')).toThrow(ENSValidationError);
+      expect(() => normalizeENSName('.eth')).toThrow(ENSValidationError);
+    });
+
+    it('rejects labels over 63 characters', () => {
+      const longLabel = 'a'.repeat(64);
+      expect(() => normalizeENSName(longLabel)).toThrow(ENSValidationError);
+    });
+
+    it('accepts labels up to 63 characters', () => {
+      const maxLabel = 'a'.repeat(63);
+      expect(normalizeENSName(maxLabel)).toBe(`${maxLabel}.eth`);
+    });
+
+    it('rejects names over 253 characters', () => {
+      const longName = 'a'.repeat(250) + '.eth';
+      expect(() => normalizeENSName(longName)).toThrow(ENSValidationError);
+    });
+
+    it('rejects leading hyphens in labels', () => {
+      expect(() => normalizeENSName('-vitalik.eth')).toThrow(ENSValidationError);
+    });
+
+    it('rejects trailing hyphens in labels', () => {
+      expect(() => normalizeENSName('vitalik-.eth')).toThrow(ENSValidationError);
+    });
+
+    it('allows hyphens in middle of labels', () => {
+      expect(normalizeENSName('my-name.eth')).toBe('my-name.eth');
+    });
+
+    it('rejects underscores', () => {
+      expect(() => normalizeENSName('my_name.eth')).toThrow(ENSValidationError);
+    });
+
+    it('rejects mixed Latin and Cyrillic (homograph attack)', () => {
+      // 'vitalік' with Cyrillic 'і'
+      expect(() => normalizeENSName('vitalік')).toThrow(ENSValidationError);
+    });
+
+    it('rejects mixed Latin and Greek (homograph attack)', () => {
+      // 'vitαlik' with Greek 'α'
+      expect(() => normalizeENSName('vitαlik')).toThrow(ENSValidationError);
+    });
+
+    it('allows pure Cyrillic names', () => {
+      expect(normalizeENSName('виталик')).toBe('виталик.eth');
+    });
+
+    it('allows emoji in names', () => {
+      expect(normalizeENSName('🔥fire')).toBe('🔥fire.eth');
+    });
+  });
+
+  describe('isValidENSName', () => {
+    it('returns true for valid names', () => {
+      expect(isValidENSName('vitalik')).toBe(true);
+      expect(isValidENSName('vitalik.eth')).toBe(true);
+      expect(isValidENSName('foo.bar.eth')).toBe(true);
+    });
+
+    it('returns false for invalid names', () => {
+      expect(isValidENSName('')).toBe(false);
+      expect(isValidENSName('vitalik\x00.eth')).toBe(false);
+      expect(isValidENSName('foo..eth')).toBe(false);
+      expect(isValidENSName('-invalid.eth')).toBe(false);
+      expect(isValidENSName('invalid-.eth')).toBe(false);
+      expect(isValidENSName('my_name.eth')).toBe(false);
+    });
+  });
+
+  describe('ENSValidationError', () => {
+    it('has correct properties', () => {
+      const error = new ENSValidationError('test message', 'test.eth', 'TEST_CODE');
+      expect(error.message).toBe('test message');
+      expect(error.name_).toBe('test.eth');
+      expect(error.code).toBe('TEST_CODE');
+      expect(error.name).toBe('ENSValidationError');
+    });
+  });
+
+  describe('resolve with validation', () => {
+    it('rejects invalid names', async () => {
+      const ens = new ENS(mockRpc);
+      await expect(ens.resolve('vitalik\x00.eth')).rejects.toThrow(ENSValidationError);
+    });
+
+    it('rejects homograph attacks', async () => {
+      const ens = new ENS(mockRpc);
+      await expect(ens.resolve('vitalік')).rejects.toThrow(ENSValidationError);
+    });
+
+    it('normalizes before resolution', async () => {
+      vi.mocked(mockRpc.call)
+        .mockResolvedValueOnce('0x000000000000000000000000abcdefabcdefabcdefabcdefabcdefabcdefabcd' as Hex)
+        .mockResolvedValueOnce(`0x000000000000000000000000${testAddress.slice(2)}` as Hex);
+
+      const ens = new ENS(mockRpc);
+      const result = await ens.resolve('VITALIK');
+
+      expect(result).toBe(testAddress);
     });
   });
 });
