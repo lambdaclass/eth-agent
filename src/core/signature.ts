@@ -9,6 +9,7 @@ import { sha256 } from '@noble/hashes/sha2';
 import type { Address, Hash, Hex, Signature } from './types.js';
 import { bytesToHex, hexToBytes, padHex, concatHex } from './hex.js';
 import { keccak256 } from './hash.js';
+import { addressEquals } from './address.js';
 
 // Configure secp256k1 to use synchronous HMAC (required for signing)
 if (!secp256k1.etc.hmacSha256Sync) {
@@ -157,7 +158,7 @@ export function recoverAddress(hash: Hash, signature: Signature): Hex {
 export function verify(hash: Hash, signature: Signature, address: Hex): boolean {
   try {
     const recoveredAddress = recoverAddress(hash, signature);
-    return recoveredAddress.toLowerCase() === address.toLowerCase();
+    return addressEquals(recoveredAddress, address);
   } catch {
     return false;
   }

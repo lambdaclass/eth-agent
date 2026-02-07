@@ -13,7 +13,7 @@ import { encode as rlpEncode } from './rlp.js';
  */
 export function isAddress(value: unknown): value is Address {
   if (typeof value !== 'string') return false;
-  if (!value.startsWith('0x')) return false;
+  if (!value.startsWith('0x') && !value.startsWith('0X')) return false;
   if (value.length !== 42) return false;
   if (!isHex(value)) return false;
   return true;
@@ -88,11 +88,12 @@ export function isChecksumValid(address: string): boolean {
 }
 
 /**
- * Normalize an address to lowercase (for comparison)
+ * Normalize an address to EIP-55 checksum format
+ * This is the canonical form for Ethereum addresses
  */
 export function normalizeAddress(address: string): Address {
   assertAddress(address);
-  return address.toLowerCase() as Address;
+  return toChecksumAddress(address);
 }
 
 /**

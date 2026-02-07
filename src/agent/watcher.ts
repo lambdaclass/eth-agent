@@ -7,6 +7,7 @@ import type { Address, Hash, Hex } from '../core/types.js';
 import type { RPCClient } from '../protocol/rpc.js';
 import { keccak256 } from '../core/hash.js';
 import { type Logger, noopLogger } from '../core/logger.js';
+import { normalizeAddress, addressEquals } from '../core/address.js';
 import {
   type StablecoinInfo,
   STABLECOINS,
@@ -67,7 +68,7 @@ export class PaymentWatcher {
 
   constructor(config: PaymentWatcherConfig) {
     this.rpc = config.rpc;
-    this.address = config.address.toLowerCase() as Address;
+    this.address = normalizeAddress(config.address);
     this.tokens = config.tokens ?? Object.values(STABLECOINS);
     this.pollingInterval = config.pollingInterval ?? 12000;
     this.lastProcessedBlock = typeof config.fromBlock === 'number' ? config.fromBlock : 0;
@@ -132,7 +133,7 @@ export class PaymentWatcher {
         if (options.token && payment.token.symbol !== options.token.symbol) {
           return;
         }
-        if (options.from && payment.from.toLowerCase() !== options.from.toLowerCase()) {
+        if (options.from && !addressEquals(payment.from, options.from)) {
           return;
         }
         if (options.minAmount !== undefined && payment.amount < options.minAmount) {
@@ -192,7 +193,7 @@ export class PaymentWatcher {
       const tokenAddresses = this.tokens
         .map((t) => getStablecoinAddress(t, this.chainId!))
         .filter((addr): addr is string => addr !== undefined)
-        .map((addr) => addr.toLowerCase());
+        .map((addr) => normalizeAddress(addr));
 
       if (tokenAddresses.length === 0) {
         return [];

@@ -2,6 +2,8 @@
  * Well-known stablecoin addresses across chains
  */
 
+import { addressEquals } from '../core/address.js';
+
 export interface StablecoinInfo {
   symbol: string;
   name: string;
@@ -69,7 +71,7 @@ export const DAI: StablecoinInfo = {
   name: 'Dai Stablecoin',
   decimals: 18,
   addresses: {
-    1: '0x6B175474E89094C44Da98b954EesdFDC1B0A7D',         // Ethereum Mainnet
+    1: '0x6B175474E89094C44Da98b954EeeDFdC1bE0A7Bf',       // Ethereum Mainnet
     10: '0xDA10009cBd5D07dd0CeCc66161FC93D7c9000da1',      // Optimism
     137: '0x8f3Cf7ad23Cd3CaDbD9735AFf958023239c6A063',     // Polygon
     42161: '0xDA10009cBd5D07dd0CeCc66161FC93D7c9000da1',   // Arbitrum One
@@ -149,10 +151,9 @@ export function getStablecoinsForChain(chainId: number): Map<StablecoinSymbol, s
  * Check if an address is a known stablecoin on a chain
  */
 export function isKnownStablecoin(address: string, chainId: number): StablecoinInfo | undefined {
-  const normalizedAddress = address.toLowerCase();
   for (const info of Object.values(STABLECOINS)) {
     const stablecoinAddress = info.addresses[chainId];
-    if (stablecoinAddress?.toLowerCase() === normalizedAddress) {
+    if (stablecoinAddress && addressEquals(stablecoinAddress, address)) {
       return info;
     }
   }

@@ -7,6 +7,7 @@ import type { Address, Hash, Hex } from '../core/types.js';
 import { generatePrivateKey, privateKeyToAddress, sign } from '../core/signature.js';
 import { keccak256 } from '../core/hash.js';
 import { encodeParameters } from '../core/abi.js';
+import { addressEquals } from '../core/address.js';
 
 export interface SessionKeyPermissions {
   // Time constraints
@@ -139,16 +140,14 @@ export class SessionKeyManager {
 
     // Check target whitelist
     if (permissions.allowedTargets && permissions.allowedTargets.length > 0) {
-      const targetLower = action.target.toLowerCase();
-      if (!permissions.allowedTargets.some((t) => t.toLowerCase() === targetLower)) {
+      if (!permissions.allowedTargets.some((t) => addressEquals(t, action.target))) {
         return { valid: false, reason: 'Target not in whitelist' };
       }
     }
 
     // Check target blacklist
     if (permissions.blockedTargets && permissions.blockedTargets.length > 0) {
-      const targetLower = action.target.toLowerCase();
-      if (permissions.blockedTargets.some((t) => t.toLowerCase() === targetLower)) {
+      if (permissions.blockedTargets.some((t) => addressEquals(t, action.target))) {
         return { valid: false, reason: 'Target is blocked' };
       }
     }

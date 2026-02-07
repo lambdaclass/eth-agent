@@ -5,7 +5,7 @@
 
 import type { Address, Hash, Hex } from '../core/types.js';
 import { formatETH } from '../core/units.js';
-import { isAddress, toChecksumAddress } from '../core/address.js';
+import { isAddress, toChecksumAddress, normalizeAddress } from '../core/address.js';
 import type { Account } from '../protocol/account.js';
 import { EOA } from '../protocol/account.js';
 import { RPCClient } from '../protocol/rpc.js';
@@ -206,7 +206,7 @@ export class SmartAgentWallet {
     // Build blocked address map
     const blockedAddresses = new Map<string, string>();
     for (const addr of config.blockedAddresses ?? []) {
-      blockedAddresses.set(addr.address.toLowerCase(), addr.reason ?? 'Blocked');
+      blockedAddresses.set(normalizeAddress(addr.address), addr.reason ?? 'Blocked');
     }
 
     return new SmartAgentWallet({
@@ -278,7 +278,7 @@ export class SmartAgentWallet {
     const to = await this.resolveAddress(options.to);
 
     // Check if blocked
-    const blocked = this.blockedAddresses.get(to.toLowerCase());
+    const blocked = this.blockedAddresses.get(normalizeAddress(to));
     if (blocked) {
       throw new BlockedAddressError(to, blocked);
     }
@@ -403,7 +403,7 @@ export class SmartAgentWallet {
       const to = await this.resolveAddress(transfer.to);
 
       // Check if blocked
-      const blocked = this.blockedAddresses.get(to.toLowerCase());
+      const blocked = this.blockedAddresses.get(normalizeAddress(to));
       if (blocked) {
         throw new BlockedAddressError(to, blocked);
       }

@@ -7,6 +7,7 @@ import type { RPCClient } from './rpc.js';
 import type { Account } from './account.js';
 import { TransactionBuilder } from './transaction.js';
 import { addPercent } from '../core/units.js';
+import { addressEquals } from '../core/address.js';
 
 export interface PendingTransaction {
   hash: Hash;
@@ -107,7 +108,7 @@ export class TransactionAccelerator {
       throw new Error(`Transaction ${hash} not found or already mined`);
     }
 
-    if (pending.from.toLowerCase() !== account.address.toLowerCase()) {
+    if (!addressEquals(pending.from, account.address)) {
       throw new Error('Account does not own this transaction');
     }
 
@@ -191,7 +192,7 @@ export class TransactionAccelerator {
       throw new Error(`Transaction ${hash} not found or already mined`);
     }
 
-    if (pending.from.toLowerCase() !== account.address.toLowerCase()) {
+    if (!addressEquals(pending.from, account.address)) {
       throw new Error('Account does not own this transaction');
     }
 
@@ -247,7 +248,7 @@ export class TransactionAccelerator {
       return { canModify: false, reason: 'Transaction not found or already mined' };
     }
 
-    if (pending.from.toLowerCase() !== account.address.toLowerCase()) {
+    if (!addressEquals(pending.from, account.address)) {
       return { canModify: false, reason: 'Account does not own this transaction' };
     }
 
